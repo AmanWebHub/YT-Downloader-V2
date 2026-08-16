@@ -1,0 +1,33 @@
+# Visual Studio
+.vs
+*.user
+*.suo
+*.sln.docstates
+
+# Build output
+Debug/
+Release/
+x64/
+x86/
+Win32/
+*.obj
+*.pdb
+*.ilk
+*.exe
+*.exp
+*.lib
+*.log
+*.tlog
+*.idb
+*.iobj
+*.ipdb
+
+# CMake (if used later)
+build/
+CMakeCache.txt
+CMakeFiles/
+
+# Dependencies pulled at install-time (matches V1.1 layout)
+bin/
+.V1
+.vs
