@@ -2,7 +2,10 @@
 #include <shellapi.h>
 #include <string>
 
-#define IDC_URL         1001
+#define IDC_URL             1001
+#define IDC_RADIO_MP4       1002
+#define IDC_RADIO_MP3       1003
+#define IDC_DOWNLOAD_BTN    1004
 
 LRESULT CALLBACK WindowProc(
     HWND hwnd,
@@ -47,6 +50,108 @@ LRESULT CALLBACK WindowProc(
             nullptr,
             nullptr
         );
+
+        // Format label
+        CreateWindowW(
+            L"STATIC",
+            L"Format:",
+            WS_VISIBLE | WS_CHILD,
+            30,
+            110,
+            100,
+            25,
+            hwnd,
+            nullptr,
+            nullptr,
+            nullptr
+        );
+
+        // MP4 radio button (first in the group, default checked)
+        CreateWindowW(
+            L"BUTTON",
+            L"MP4 Video",
+            WS_VISIBLE | WS_CHILD | WS_GROUP | BS_AUTORADIOBUTTON,
+            30,
+            140,
+            120,
+            25,
+            hwnd,
+            (HMENU)IDC_RADIO_MP4,
+            nullptr,
+            nullptr
+        );
+
+        // MP3 radio button
+        CreateWindowW(
+            L"BUTTON",
+            L"MP3 Audio",
+            WS_VISIBLE | WS_CHILD | BS_AUTORADIOBUTTON,
+            160,
+            140,
+            120,
+            25,
+            hwnd,
+            (HMENU)IDC_RADIO_MP3,
+            nullptr,
+            nullptr
+        );
+
+        // Default the format selection to MP4
+        SendMessageW(
+            GetDlgItem(hwnd, IDC_RADIO_MP4),
+            BM_SETCHECK,
+            BST_CHECKED,
+            0
+        );
+
+        // Download button
+        CreateWindowW(
+            L"BUTTON",
+            L"Download",
+            WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+            30,
+            190,
+            120,
+            35,
+            hwnd,
+            (HMENU)IDC_DOWNLOAD_BTN,
+            nullptr,
+            nullptr
+        );
+
+        return 0;
+    }
+
+    case WM_COMMAND:
+    {
+        if (LOWORD(wParam) == IDC_DOWNLOAD_BTN)
+        {
+            // Read the URL
+            HWND urlBox = GetDlgItem(hwnd, IDC_URL);
+            wchar_t urlBuffer[2048]{};
+            GetWindowTextW(urlBox, urlBuffer, 2048);
+
+            // Read the selected format
+            bool isMp3 = (SendMessageW(
+                GetDlgItem(hwnd, IDC_RADIO_MP3),
+                BM_GETCHECK,
+                0,
+                0
+            ) == BST_CHECKED);
+
+            std::wstring message = L"URL: ";
+            message += urlBuffer;
+            message += L"\nFormat: ";
+            message += isMp3 ? L"MP3 Audio" : L"MP4 Video";
+            message += L"\n\n(Actual download logic comes next)";
+
+            MessageBoxW(
+                hwnd,
+                message.c_str(),
+                L"IT Downloader V2",
+                MB_OK | MB_ICONINFORMATION
+            );
+        }
 
         return 0;
     }
