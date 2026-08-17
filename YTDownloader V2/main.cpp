@@ -10,8 +10,6 @@ int WINAPI wWinMain(
     _In_ int nCmdShow
 )
 {
-    // Read command-line arguments - the browser extension launches this
-    // exe with the video URL as argv[1].
     std::wstring initialUrl;
 
     int argumentCount = 0;
@@ -23,16 +21,19 @@ int WINAPI wWinMain(
         {
             initialUrl = arguments[1];
         }
+
         LocalFree(arguments);
     }
 
     MainWindow window;
+
     if (!window.Create(hInstance, nCmdShow, initialUrl))
     {
         return 0;
     }
 
     MSG msg{};
+
     while (GetMessageW(&msg, nullptr, 0, 0))
     {
         TranslateMessage(&msg);

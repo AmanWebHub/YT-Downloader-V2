@@ -15,6 +15,11 @@ private:
 
     void CreateControls(HWND hwnd);
     void OnDownloadClicked(HWND hwnd);
+    void SetDownloadingState(bool downloading);
 
     HWND m_hwnd = nullptr;
+    HWND m_urlEdit = nullptr;
+    HWND m_downloadButton = nullptr;
+    HWND m_progressBar = nullptr;
+    HWND m_statusLabel = nullptr;
 };
