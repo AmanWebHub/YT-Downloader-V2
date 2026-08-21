@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include "resource.h"
 #include "DownloadManager.h"
+#include "CompletionWindow.h"
 
 #include <commctrl.h>
 
@@ -16,6 +17,8 @@ bool MainWindow::Create(
     int nCmdShow,
     const std::wstring& initialUrl)
 {
+    m_hInstance = hInstance;
+
     INITCOMMONCONTROLSEX commonControls{};
     commonControls.dwSize = sizeof(commonControls);
     commonControls.dwICC = ICC_PROGRESS_CLASS;
@@ -39,7 +42,7 @@ bool MainWindow::Create(
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         700,
-        500,
+        340,
         nullptr,
         nullptr,
         hInstance,
@@ -126,11 +129,20 @@ LRESULT MainWindow::HandleMessage(
         return 0;
 
     case WM_COMMAND:
-        if (LOWORD(wParam) == IDC_DOWNLOAD_BTN &&
-            HIWORD(wParam) == BN_CLICKED)
+        if (HIWORD(wParam) == BN_CLICKED)
         {
-            OnDownloadClicked(hwnd);
-            return 0;
+            switch (LOWORD(wParam))
+            {
+            case IDC_DOWNLOAD_BTN:
+                OnDownloadClicked(hwnd);
+                return 0;
+            case IDC_CANCEL_BTN:
+                OnCancelClicked();
+                return 0;
+            case IDC_PAUSE_BTN:
+                OnPauseResumeClicked(hwnd);
+                return 0;
+            }
         }
         break;
 
@@ -153,6 +165,8 @@ LRESULT MainWindow::HandleMessage(
 
         if (status != nullptr)
         {
+            m_lastStatusText = *status;
+
             if (m_statusLabel != nullptr)
             {
                 SetWindowTextW(
@@ -175,46 +189,67 @@ LRESULT MainWindow::HandleMessage(
         {
             const DWORD exitCode = info->exitCode;
             const std::wstring folder = info->downloadsFolder;
+            const std::wstring filePath = info->filePath;
+            const bool wasPaused = info->wasPaused;
 
-            SetDownloadingState(false);
-
-            if (exitCode == 0)
+            if (wasPaused)
             {
+                // Stay in a "paused" state: Cancel remains available,
+                // Pause becomes Resume. Nothing else changes.
+                m_isPaused = true;
+                EnableWindow(m_pauseButton, TRUE);
+                SetWindowTextW(m_pauseButton, L"Resume");
+
                 if (m_statusLabel != nullptr)
                 {
-                    SetWindowTextW(
-                        m_statusLabel,
-                        L"Download complete.");
+                    SetWindowTextW(m_statusLabel, L"Paused.");
                 }
-
-                MessageBoxW(
-                    hwnd,
-                    (L"Download complete!\n\nSaved to:\n" + folder)
-                        .c_str(),
-                    L"IT Downloader V2",
-                    MB_OK | MB_ICONINFORMATION);
             }
             else
             {
-                if (m_statusLabel != nullptr)
+                SetDownloadingState(false);
+
+                if (exitCode == 0)
                 {
-                    SetWindowTextW(
-                        m_statusLabel,
-                        L"Download failed.");
+                    if (m_statusLabel != nullptr)
+                    {
+                        SetWindowTextW(
+                            m_statusLabel,
+                            L"Download complete.");
+                    }
+
+                    CompletionWindow::Create(
+                        m_hInstance,
+                        m_hwnd,
+                        filePath.empty() ? folder : filePath);
                 }
-
-                if (exitCode != 1)
+                else
                 {
-                    std::wstring message =
-                        L"yt-dlp exited with error code " +
-                        std::to_wstring(exitCode) +
-                        L".\n\nCheck the status shown in the window.";
+                    if (m_statusLabel != nullptr)
+                    {
+                        SetWindowTextW(
+                            m_statusLabel,
+                            L"Download failed.");
+                    }
 
-                    MessageBoxW(
-                        hwnd,
-                        message.c_str(),
-                        L"IT Downloader V2",
-                        MB_OK | MB_ICONERROR);
+                    if (exitCode != PRE_LAUNCH_FAILURE_CODE)
+                    {
+                        std::wstring message =
+                            L"yt-dlp exited with error code " +
+                            std::to_wstring(exitCode) +
+                            L".";
+
+                        if (!m_lastStatusText.empty())
+                        {
+                            message += L"\n\n" + m_lastStatusText;
+                        }
+
+                        MessageBoxW(
+                            hwnd,
+                            message.c_str(),
+                            L"IT Downloader V2",
+                            MB_OK | MB_ICONERROR);
+                    }
                 }
             }
 
@@ -225,7 +260,7 @@ LRESULT MainWindow::HandleMessage(
     }
 
     case WM_DESTROY:
-        DownloadManager::StopDownload();
+        DownloadManager::CancelDownload();
         PostQuitMessage(0);
         return 0;
     }
@@ -308,6 +343,26 @@ void MainWindow::CreateControls(HWND hwnd)
         nullptr,
         nullptr);
 
+    m_cancelButton = CreateWindowW(
+        L"BUTTON",
+        L"Cancel",
+        WS_CHILD | BS_PUSHBUTTON,
+        160, 190, 100, 35,
+        hwnd,
+        (HMENU)IDC_CANCEL_BTN,
+        nullptr,
+        nullptr);
+
+    m_pauseButton = CreateWindowW(
+        L"BUTTON",
+        L"Pause",
+        WS_CHILD | BS_PUSHBUTTON,
+        270, 190, 100, 35,
+        hwnd,
+        (HMENU)IDC_PAUSE_BTN,
+        nullptr,
+        nullptr);
+
     m_progressBar = CreateWindowExW(
         0,
         PROGRESS_CLASSW,
@@ -344,12 +399,18 @@ void MainWindow::CreateControls(HWND hwnd)
 
 void MainWindow::SetDownloadingState(bool downloading)
 {
-    if (m_downloadButton != nullptr)
+    ShowWindow(m_downloadButton, downloading ? SW_HIDE : SW_SHOW);
+    ShowWindow(m_cancelButton, downloading ? SW_SHOW : SW_HIDE);
+    ShowWindow(m_pauseButton, downloading ? SW_SHOW : SW_HIDE);
+
+    if (downloading)
     {
-        EnableWindow(
-            m_downloadButton,
-            downloading ? FALSE : TRUE);
+        SetWindowTextW(m_pauseButton, L"Pause");
+        EnableWindow(m_pauseButton, TRUE);
+        EnableWindow(m_cancelButton, TRUE);
     }
+
+    m_isPaused = false;
 
     if (m_urlEdit != nullptr)
     {
@@ -367,6 +428,35 @@ void MainWindow::SetDownloadingState(bool downloading)
         downloading ? FALSE : TRUE);
 }
 
+int MainWindow::ResolvePlaylistChoice(HWND hwnd, const std::wstring& url)
+{
+    const bool hasList = url.find(L"list=") != std::wstring::npos;
+    const bool hasVideo = url.find(L"v=") != std::wstring::npos;
+
+    if (!hasList)
+    {
+        return 0; // no playlist involved at all
+    }
+
+    if (!hasVideo)
+    {
+        return 1; // a pure playlist URL - unambiguous
+    }
+
+    // Both present: a specific video that's also part of a playlist.
+    const int result = MessageBoxW(
+        hwnd,
+        L"This video is part of a playlist.\n\n"
+        L"Download the entire playlist, or just this video?\n\n"
+        L"Yes = Entire playlist\nNo = This video only",
+        L"IT Downloader V2",
+        MB_YESNOCANCEL | MB_ICONQUESTION);
+
+    if (result == IDYES) return 1;
+    if (result == IDNO) return 0;
+    return -1;
+}
+
 void MainWindow::OnDownloadClicked(HWND hwnd)
 {
     wchar_t urlBuffer[2048]{};
@@ -375,6 +465,14 @@ void MainWindow::OnDownloadClicked(HWND hwnd)
         m_urlEdit,
         urlBuffer,
         2048);
+
+    const std::wstring url = urlBuffer;
+
+    const int playlistChoice = ResolvePlaylistChoice(hwnd, url);
+    if (playlistChoice == -1)
+    {
+        return; // user cancelled the playlist prompt
+    }
 
     const bool isMp3 =
         SendMessageW(
@@ -385,8 +483,9 @@ void MainWindow::OnDownloadClicked(HWND hwnd)
 
     if (DownloadManager::StartDownload(
         hwnd,
-        urlBuffer,
-        isMp3))
+        url,
+        isMp3,
+        playlistChoice == 1))
     {
         SendMessageW(
             m_progressBar,
@@ -399,5 +498,32 @@ void MainWindow::OnDownloadClicked(HWND hwnd)
             L"Starting download...");
 
         SetDownloadingState(true);
+    }
+}
+
+void MainWindow::OnCancelClicked()
+{
+    DownloadManager::CancelDownload();
+    EnableWindow(m_cancelButton, FALSE);
+    EnableWindow(m_pauseButton, FALSE);
+    SetWindowTextW(m_statusLabel, L"Cancelling...");
+}
+
+void MainWindow::OnPauseResumeClicked(HWND hwnd)
+{
+    if (!m_isPaused)
+    {
+        DownloadManager::PauseDownload();
+        EnableWindow(m_pauseButton, FALSE);
+        SetWindowTextW(m_statusLabel, L"Pausing...");
+        // m_isPaused and the button text get set once
+        // WM_APP_DOWNLOAD_FINISHED confirms the pause actually happened.
+    }
+    else
+    {
+        // Resume: just start the same download again - yt-dlp
+        // continues the partially-downloaded (.part) file by default.
+        m_isPaused = false;
+        OnDownloadClicked(hwnd);
     }
 }

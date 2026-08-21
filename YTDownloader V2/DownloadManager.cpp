@@ -7,11 +7,16 @@
 #include <atomic>
 #include <cstdlib>
 #include <cwctype>
+#include <shellapi.h>
+#include <shlobj.h>
+
+#pragma comment(lib, "shell32.lib")
 
 namespace
 {
     std::atomic<bool> g_downloadRunning{ false };
     std::atomic<bool> g_stopRequested{ false };
+    std::atomic<bool> g_pauseRequested{ false };
     HANDLE g_processHandle = nullptr;
 
     std::wstring GetExeDirectory()
@@ -98,6 +103,88 @@ namespace
         return text.substr(start, end - start);
     }
 
+    // Scans a folder for the newest real media file that appeared since
+    // downloadStart, skipping known leftover files (thumbnails, partial
+    // downloads, metadata). This is the reliable fallback when the exact
+    // filename couldn't be confidently parsed out of yt-dlp's console
+    // output - text-parsing alone varies too much across download types.
+    std::wstring FindNewestFileSince(const std::wstring& folder, const FILETIME& downloadStart)
+    {
+        std::wstring searchPattern = folder + L"\\*";
+        WIN32_FIND_DATAW findData{};
+
+        HANDLE findHandle = FindFirstFileW(searchPattern.c_str(), &findData);
+        if (findHandle == INVALID_HANDLE_VALUE)
+        {
+            return L"";
+        }
+
+        std::wstring bestName;
+        FILETIME bestTime{};
+
+        static const wchar_t* skipExtensions[] = {
+            L".part", L".ytdl", L".webp", L".description", L".json", L".temp"
+        };
+
+        do
+        {
+            if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            {
+                continue;
+            }
+
+            std::wstring name = findData.cFileName;
+            const size_t dotPos = name.find_last_of(L'.');
+            if (dotPos != std::wstring::npos)
+            {
+                std::wstring ext = name.substr(dotPos);
+                bool skip = false;
+                for (const wchar_t* skipExt : skipExtensions)
+                {
+                    if (_wcsicmp(ext.c_str(), skipExt) == 0)
+                    {
+                        skip = true;
+                        break;
+                    }
+                }
+                if (skip)
+                {
+                    continue;
+                }
+            }
+
+            // Only consider files modified at/after the download started
+            // (with a small 2-second grace window for clock granularity).
+            ULARGE_INTEGER fileTimeValue{};
+            fileTimeValue.LowPart = findData.ftLastWriteTime.dwLowDateTime;
+            fileTimeValue.HighPart = findData.ftLastWriteTime.dwHighDateTime;
+
+            ULARGE_INTEGER startTimeValue{};
+            startTimeValue.LowPart = downloadStart.dwLowDateTime;
+            startTimeValue.HighPart = downloadStart.dwHighDateTime;
+
+            // 2 seconds = 20,000,000 in 100-nanosecond FILETIME units
+            if (fileTimeValue.QuadPart + 20000000ULL < startTimeValue.QuadPart)
+            {
+                continue;
+            }
+
+            ULARGE_INTEGER bestTimeValue{};
+            bestTimeValue.LowPart = bestTime.dwLowDateTime;
+            bestTimeValue.HighPart = bestTime.dwHighDateTime;
+
+            if (bestName.empty() || fileTimeValue.QuadPart > bestTimeValue.QuadPart)
+            {
+                bestName = name;
+                bestTime = findData.ftLastWriteTime;
+            }
+        } while (FindNextFileW(findHandle, &findData));
+
+        FindClose(findHandle);
+
+        return bestName.empty() ? L"" : (folder + L"\\" + bestName);
+    }
+
     bool TryParseProgress(
         const std::wstring& line,
         int& progress)
@@ -166,32 +253,11 @@ namespace
         }
     }
 
-    void PostFinished(
-        HWND ownerWindow,
-        DWORD exitCode,
-        bool isMp3,
-        const std::wstring& downloadsFolder)
-    {
-        auto* info = new DownloadFinishedInfo;
-
-        info->exitCode = exitCode;
-        info->isMp3 = isMp3;
-        info->downloadsFolder = downloadsFolder;
-
-        if (!PostMessageW(
-            ownerWindow,
-            WM_APP_DOWNLOAD_FINISHED,
-            0,
-            reinterpret_cast<LPARAM>(info)))
-        {
-            delete info;
-        }
-    }
-
     void WorkerThread(
         HWND ownerWindow,
         std::wstring url,
         bool isMp3,
+        bool isPlaylist,
         std::wstring ytDlpPath,
         std::wstring downloadsFolder)
     {
@@ -215,11 +281,21 @@ namespace
                 ownerWindow,
                 L"Failed to create the output pipe.");
 
-            PostFinished(
-                ownerWindow,
-                1,
-                isMp3,
-                downloadsFolder);
+            {
+                auto* info = new DownloadFinishedInfo;
+                info->exitCode = PRE_LAUNCH_FAILURE_CODE;
+                info->isMp3 = isMp3;
+                info->downloadsFolder = downloadsFolder;
+
+                if (!PostMessageW(
+                    ownerWindow,
+                    WM_APP_DOWNLOAD_FINISHED,
+                    0,
+                    reinterpret_cast<LPARAM>(info)))
+                {
+                    delete info;
+                }
+            }
 
             g_downloadRunning = false;
             return;
@@ -233,8 +309,19 @@ namespace
 
         std::wstring commandLine =
             L"\"" + ytDlpPath + L"\" "
-            L"--newline "
-            L"--no-playlist ";
+            L"--newline ";
+
+        if (isPlaylist)
+        {
+            commandLine +=
+                L"--yes-playlist "
+                L"--ignore-errors ";
+        }
+        else
+        {
+            commandLine +=
+                L"--no-playlist ";
+        }
 
         if (isMp3)
         {
@@ -254,7 +341,9 @@ namespace
         commandLine +=
             L"-o \"" +
             downloadsFolder +
-            L"\\%(title)s.%(ext)s\" "
+            (isPlaylist
+                ? L"\\%(playlist_index)s - %(title)s.%(ext)s\" "
+                : L"\\%(title)s.%(ext)s\" ") +
             L"\"" +
             url +
             L"\"";
@@ -284,6 +373,9 @@ namespace
 
         PROCESS_INFORMATION processInfo{};
 
+        FILETIME downloadStartTime{};
+        GetSystemTimeAsFileTime(&downloadStartTime);
+
         const BOOL created = CreateProcessW(
             nullptr,
             commandBuffer.data(),
@@ -312,11 +404,21 @@ namespace
                 ownerWindow,
                 L"Failed to start yt-dlp.exe.");
 
-            PostFinished(
-                ownerWindow,
-                errorCode,
-                isMp3,
-                downloadsFolder);
+            {
+                auto* info = new DownloadFinishedInfo;
+                info->exitCode = PRE_LAUNCH_FAILURE_CODE;
+                info->isMp3 = isMp3;
+                info->downloadsFolder = downloadsFolder;
+
+                if (!PostMessageW(
+                    ownerWindow,
+                    WM_APP_DOWNLOAD_FINISHED,
+                    0,
+                    reinterpret_cast<LPARAM>(info)))
+                {
+                    delete info;
+                }
+            }
 
             g_downloadRunning = false;
             return;
@@ -333,12 +435,13 @@ namespace
 
         std::string buffer(4096, '\0');
         std::string pending;
+        std::wstring finalFileName;
 
         bool cancellationSent = false;
 
         while (true)
         {
-            if (g_stopRequested &&
+            if ((g_stopRequested || g_pauseRequested) &&
                 !cancellationSent)
             {
                 TerminateProcess(
@@ -467,25 +570,71 @@ namespace
                     if (colon !=
                         std::wstring::npos)
                     {
+                        const std::wstring destName =
+                            Trim(line.substr(colon + 1));
+
                         PostStatus(
                             ownerWindow,
-                            Trim(
-                                line.substr(
-                                    colon + 1)));
+                            destName);
+
+                        const size_t nameSlash =
+                            destName.find_last_of(L"\\/");
+
+                        finalFileName = (nameSlash != std::wstring::npos)
+                            ? destName.substr(nameSlash + 1)
+                            : destName;
                     }
                 }
                 else if (line.find(
-                    L"[ExtractAudio]") !=
+                    L"[ExtractAudio] Destination:") !=
                     std::wstring::npos)
                 {
+                    const size_t colon =
+                        line.find(L':');
+
+                    if (colon != std::wstring::npos)
+                    {
+                        const std::wstring destName =
+                            Trim(line.substr(colon + 1));
+
+                        const size_t nameSlash =
+                            destName.find_last_of(L"\\/");
+
+                        finalFileName = (nameSlash != std::wstring::npos)
+                            ? destName.substr(nameSlash + 1)
+                            : destName;
+                    }
+
                     PostStatus(
                         ownerWindow,
                         L"Converting audio...");
                 }
                 else if (line.find(
-                    L"[Merger]") !=
+                    L"[Merger] Merging formats into") !=
                     std::wstring::npos)
                 {
+                    const size_t firstQuote =
+                        line.find(L'"');
+                    const size_t lastQuote =
+                        line.find_last_of(L'"');
+
+                    if (firstQuote != std::wstring::npos &&
+                        lastQuote != std::wstring::npos &&
+                        lastQuote > firstQuote)
+                    {
+                        const std::wstring destName =
+                            line.substr(
+                                firstQuote + 1,
+                                lastQuote - firstQuote - 1);
+
+                        const size_t nameSlash =
+                            destName.find_last_of(L"\\/");
+
+                        finalFileName = (nameSlash != std::wstring::npos)
+                            ? destName.substr(nameSlash + 1)
+                            : destName;
+                    }
+
                     PostStatus(
                         ownerWindow,
                         L"Merging video and audio...");
@@ -518,7 +667,16 @@ namespace
 
         g_processHandle = nullptr;
 
-        if (g_stopRequested)
+        const bool wasPaused = g_pauseRequested;
+        std::wstring resolvedFilePath;
+
+        if (wasPaused)
+        {
+            PostStatus(
+                ownerWindow,
+                L"Paused.");
+        }
+        else if (g_stopRequested)
         {
             PostStatus(
                 ownerWindow,
@@ -535,15 +693,45 @@ namespace
             PostStatus(
                 ownerWindow,
                 L"Download complete.");
+
+            if (!finalFileName.empty())
+            {
+                const std::wstring candidate =
+                    downloadsFolder + L"\\" + finalFileName;
+
+                if (GetFileAttributesW(candidate.c_str()) !=
+                    INVALID_FILE_ATTRIBUTES)
+                {
+                    resolvedFilePath = candidate;
+                }
+            }
+
+            if (resolvedFilePath.empty())
+            {
+                resolvedFilePath = FindNewestFileSince(
+                    downloadsFolder,
+                    downloadStartTime);
+            }
         }
 
-        PostFinished(
+        auto* info = new DownloadFinishedInfo;
+        info->exitCode = exitCode;
+        info->isMp3 = isMp3;
+        info->wasPaused = wasPaused;
+        info->downloadsFolder = downloadsFolder;
+        info->filePath = resolvedFilePath;
+
+        if (!PostMessageW(
             ownerWindow,
-            exitCode,
-            isMp3,
-            downloadsFolder);
+            WM_APP_DOWNLOAD_FINISHED,
+            0,
+            reinterpret_cast<LPARAM>(info)))
+        {
+            delete info;
+        }
 
         g_stopRequested = false;
+        g_pauseRequested = false;
         g_downloadRunning = false;
     }
 }
@@ -553,7 +741,8 @@ namespace DownloadManager
     bool StartDownload(
         HWND ownerWindow,
         const std::wstring& url,
-        bool isMp3)
+        bool isMp3,
+        bool isPlaylist)
     {
         if (url.empty())
         {
@@ -578,6 +767,7 @@ namespace DownloadManager
         }
 
         g_stopRequested = false;
+        g_pauseRequested = false;
 
         const std::wstring ytDlpPath =
             GetYtDlpPath();
@@ -610,10 +800,6 @@ namespace DownloadManager
         {
             g_downloadRunning = false;
 
-            // FIX:
-            // MessageBoxW requires LPCWSTR.
-            // Build the message as std::wstring first,
-            // then pass message.c_str().
             std::wstring errorMessage =
                 L"Unable to create the download folder:\n\n" +
                 downloadsFolder;
@@ -632,6 +818,7 @@ namespace DownloadManager
             ownerWindow,
             url,
             isMp3,
+            isPlaylist,
             ytDlpPath,
             downloadsFolder)
             .detach();
@@ -639,7 +826,7 @@ namespace DownloadManager
         return true;
     }
 
-    void StopDownload()
+    void CancelDownload()
     {
         if (!g_downloadRunning)
         {
@@ -647,6 +834,26 @@ namespace DownloadManager
         }
 
         g_stopRequested = true;
+
+        HANDLE process =
+            g_processHandle;
+
+        if (process != nullptr)
+        {
+            TerminateProcess(
+                process,
+                1);
+        }
+    }
+
+    void PauseDownload()
+    {
+        if (!g_downloadRunning)
+        {
+            return;
+        }
+
+        g_pauseRequested = true;
 
         HANDLE process =
             g_processHandle;

@@ -19,11 +19,13 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="CompletionWindow.cpp" />
     <ClCompile Include="DownloadManager.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CompletionWindow.h" />
     <ClInclude Include="DownloadManager.h" />
     <ClInclude Include="MainWindow.h" />
     <ClInclude Include="resource.h" />
