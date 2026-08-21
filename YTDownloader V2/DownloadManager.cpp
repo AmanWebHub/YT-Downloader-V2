@@ -17,7 +17,12 @@ namespace
     std::atomic<bool> g_downloadRunning{ false };
     std::atomic<bool> g_stopRequested{ false };
     std::atomic<bool> g_pauseRequested{ false };
-    HANDLE g_processHandle = nullptr;
+
+    // The process handle and Job Object are owned by the worker thread.
+    // The control functions only use them to signal/terminate the active
+    // process tree.
+    std::atomic<HANDLE> g_processHandle{ nullptr };
+    std::atomic<HANDLE> g_jobHandle{ nullptr };
 
     std::wstring GetExeDirectory()
     {
@@ -67,7 +72,6 @@ namespace
 
     bool EnsureFolderExists(const std::wstring& folder)
     {
-        // Create the normal Downloads folder first, then the V2 subfolder.
         const size_t slash = folder.find_last_of(L"\\/");
 
         if (slash != std::wstring::npos)
@@ -103,17 +107,16 @@ namespace
         return text.substr(start, end - start);
     }
 
-    // Scans a folder for the newest real media file that appeared since
-    // downloadStart, skipping known leftover files (thumbnails, partial
-    // downloads, metadata). This is the reliable fallback when the exact
-    // filename couldn't be confidently parsed out of yt-dlp's console
-    // output - text-parsing alone varies too much across download types.
-    std::wstring FindNewestFileSince(const std::wstring& folder, const FILETIME& downloadStart)
+    std::wstring FindNewestFileSince(
+        const std::wstring& folder,
+        const FILETIME& downloadStart)
     {
         std::wstring searchPattern = folder + L"\\*";
         WIN32_FIND_DATAW findData{};
 
-        HANDLE findHandle = FindFirstFileW(searchPattern.c_str(), &findData);
+        HANDLE findHandle =
+            FindFirstFileW(searchPattern.c_str(), &findData);
+
         if (findHandle == INVALID_HANDLE_VALUE)
         {
             return L"";
@@ -123,7 +126,12 @@ namespace
         FILETIME bestTime{};
 
         static const wchar_t* skipExtensions[] = {
-            L".part", L".ytdl", L".webp", L".description", L".json", L".temp"
+            L".part",
+            L".ytdl",
+            L".webp",
+            L".description",
+            L".json",
+            L".temp"
         };
 
         do
@@ -135,10 +143,12 @@ namespace
 
             std::wstring name = findData.cFileName;
             const size_t dotPos = name.find_last_of(L'.');
+
             if (dotPos != std::wstring::npos)
             {
-                std::wstring ext = name.substr(dotPos);
+                const std::wstring ext = name.substr(dotPos);
                 bool skip = false;
+
                 for (const wchar_t* skipExt : skipExtensions)
                 {
                     if (_wcsicmp(ext.c_str(), skipExt) == 0)
@@ -147,42 +157,52 @@ namespace
                         break;
                     }
                 }
+
                 if (skip)
                 {
                     continue;
                 }
             }
 
-            // Only consider files modified at/after the download started
-            // (with a small 2-second grace window for clock granularity).
             ULARGE_INTEGER fileTimeValue{};
-            fileTimeValue.LowPart = findData.ftLastWriteTime.dwLowDateTime;
-            fileTimeValue.HighPart = findData.ftLastWriteTime.dwHighDateTime;
+            fileTimeValue.LowPart =
+                findData.ftLastWriteTime.dwLowDateTime;
+            fileTimeValue.HighPart =
+                findData.ftLastWriteTime.dwHighDateTime;
 
             ULARGE_INTEGER startTimeValue{};
-            startTimeValue.LowPart = downloadStart.dwLowDateTime;
-            startTimeValue.HighPart = downloadStart.dwHighDateTime;
+            startTimeValue.LowPart =
+                downloadStart.dwLowDateTime;
+            startTimeValue.HighPart =
+                downloadStart.dwHighDateTime;
 
-            // 2 seconds = 20,000,000 in 100-nanosecond FILETIME units
-            if (fileTimeValue.QuadPart + 20000000ULL < startTimeValue.QuadPart)
+            // 2 seconds = 20,000,000 in 100-nanosecond FILETIME units.
+            if (fileTimeValue.QuadPart + 20000000ULL <
+                startTimeValue.QuadPart)
             {
                 continue;
             }
 
             ULARGE_INTEGER bestTimeValue{};
-            bestTimeValue.LowPart = bestTime.dwLowDateTime;
-            bestTimeValue.HighPart = bestTime.dwHighDateTime;
+            bestTimeValue.LowPart =
+                bestTime.dwLowDateTime;
+            bestTimeValue.HighPart =
+                bestTime.dwHighDateTime;
 
-            if (bestName.empty() || fileTimeValue.QuadPart > bestTimeValue.QuadPart)
+            if (bestName.empty() ||
+                fileTimeValue.QuadPart > bestTimeValue.QuadPart)
             {
                 bestName = name;
                 bestTime = findData.ftLastWriteTime;
             }
+
         } while (FindNextFileW(findHandle, &findData));
 
         FindClose(findHandle);
 
-        return bestName.empty() ? L"" : (folder + L"\\" + bestName);
+        return bestName.empty()
+            ? L""
+            : (folder + L"\\" + bestName);
     }
 
     bool TryParseProgress(
@@ -253,6 +273,61 @@ namespace
         }
     }
 
+    void PostFinished(
+        HWND ownerWindow,
+        DWORD exitCode,
+        bool isMp3,
+        bool wasPaused,
+        const std::wstring& downloadsFolder,
+        const std::wstring& filePath)
+    {
+        auto* info = new DownloadFinishedInfo;
+
+        info->exitCode = exitCode;
+        info->isMp3 = isMp3;
+        info->wasPaused = wasPaused;
+        info->downloadsFolder = downloadsFolder;
+        info->filePath = filePath;
+
+        if (!PostMessageW(
+            ownerWindow,
+            WM_APP_DOWNLOAD_FINISHED,
+            0,
+            reinterpret_cast<LPARAM>(info)))
+        {
+            delete info;
+        }
+    }
+
+    // Creates a Job Object configured so that terminating the job also
+    // terminates all child processes created by yt-dlp (for example ffmpeg).
+    HANDLE CreateDownloadJob()
+    {
+        HANDLE job = CreateJobObjectW(nullptr, nullptr);
+
+        if (job == nullptr)
+        {
+            return nullptr;
+        }
+
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobInfo{};
+
+        jobInfo.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+        if (!SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &jobInfo,
+            sizeof(jobInfo)))
+        {
+            CloseHandle(job);
+            return nullptr;
+        }
+
+        return job;
+    }
+
     void WorkerThread(
         HWND ownerWindow,
         std::wstring url,
@@ -281,27 +356,18 @@ namespace
                 ownerWindow,
                 L"Failed to create the output pipe.");
 
-            {
-                auto* info = new DownloadFinishedInfo;
-                info->exitCode = PRE_LAUNCH_FAILURE_CODE;
-                info->isMp3 = isMp3;
-                info->downloadsFolder = downloadsFolder;
-
-                if (!PostMessageW(
-                    ownerWindow,
-                    WM_APP_DOWNLOAD_FINISHED,
-                    0,
-                    reinterpret_cast<LPARAM>(info)))
-                {
-                    delete info;
-                }
-            }
+            PostFinished(
+                ownerWindow,
+                PRE_LAUNCH_FAILURE_CODE,
+                isMp3,
+                false,
+                downloadsFolder,
+                L"");
 
             g_downloadRunning = false;
             return;
         }
 
-        // The parent must keep the read side private.
         SetHandleInformation(
             readPipe,
             HANDLE_FLAG_INHERIT,
@@ -309,7 +375,8 @@ namespace
 
         std::wstring commandLine =
             L"\"" + ytDlpPath + L"\" "
-            L"--newline ";
+            L"--newline "
+            L"--continue ";
 
         if (isPlaylist)
         {
@@ -388,9 +455,6 @@ namespace
             &startupInfo,
             &processInfo);
 
-        // The child now owns its inherited copy.
-        // The parent closes its write handle so ReadFile
-        // can reach EOF when yt-dlp exits.
         CloseHandle(writePipe);
         writePipe = nullptr;
 
@@ -400,25 +464,22 @@ namespace
 
             CloseHandle(readPipe);
 
+            std::wstring errorText =
+                L"Failed to start yt-dlp.exe. Windows error code: " +
+                std::to_wstring(errorCode) +
+                L".";
+
             PostStatus(
                 ownerWindow,
-                L"Failed to start yt-dlp.exe.");
+                errorText);
 
-            {
-                auto* info = new DownloadFinishedInfo;
-                info->exitCode = PRE_LAUNCH_FAILURE_CODE;
-                info->isMp3 = isMp3;
-                info->downloadsFolder = downloadsFolder;
-
-                if (!PostMessageW(
-                    ownerWindow,
-                    WM_APP_DOWNLOAD_FINISHED,
-                    0,
-                    reinterpret_cast<LPARAM>(info)))
-                {
-                    delete info;
-                }
-            }
+            PostFinished(
+                ownerWindow,
+                PRE_LAUNCH_FAILURE_CODE,
+                isMp3,
+                false,
+                downloadsFolder,
+                L"");
 
             g_downloadRunning = false;
             return;
@@ -426,8 +487,73 @@ namespace
 
         CloseHandle(processInfo.hThread);
 
-        g_processHandle =
-            processInfo.hProcess;
+        // Create the Job Object after yt-dlp starts, then assign yt-dlp to it.
+        // Once assigned, any ffmpeg process created by yt-dlp is part of the
+        // same process tree controlled by the job.
+        HANDLE jobHandle = CreateDownloadJob();
+
+        if (jobHandle == nullptr)
+        {
+            TerminateProcess(processInfo.hProcess, 1);
+            WaitForSingleObject(processInfo.hProcess, INFINITE);
+            CloseHandle(processInfo.hProcess);
+            CloseHandle(readPipe);
+
+            PostStatus(
+                ownerWindow,
+                L"Failed to create the download process group.");
+
+            PostFinished(
+                ownerWindow,
+                PRE_LAUNCH_FAILURE_CODE,
+                isMp3,
+                false,
+                downloadsFolder,
+                L"");
+
+            g_downloadRunning = false;
+            return;
+        }
+
+        if (!AssignProcessToJobObject(
+            jobHandle,
+            processInfo.hProcess))
+        {
+            const DWORD errorCode = GetLastError();
+
+            CloseHandle(jobHandle);
+
+            TerminateProcess(processInfo.hProcess, 1);
+            WaitForSingleObject(processInfo.hProcess, INFINITE);
+            CloseHandle(processInfo.hProcess);
+            CloseHandle(readPipe);
+
+            PostStatus(
+                ownerWindow,
+                L"Failed to attach yt-dlp to its process group. "
+                L"Windows error code: " +
+                std::to_wstring(errorCode) +
+                L".");
+
+            PostFinished(
+                ownerWindow,
+                PRE_LAUNCH_FAILURE_CODE,
+                isMp3,
+                false,
+                downloadsFolder,
+                L"");
+
+            g_downloadRunning = false;
+            return;
+        }
+
+        g_processHandle.store(
+            processInfo.hProcess,
+            std::memory_order_release);
+
+        g_jobHandle.store(
+            jobHandle,
+            std::memory_order_release);
 
         PostStatus(
             ownerWindow,
@@ -444,9 +570,24 @@ namespace
             if ((g_stopRequested || g_pauseRequested) &&
                 !cancellationSent)
             {
-                TerminateProcess(
-                    processInfo.hProcess,
-                    1);
+                HANDLE activeJob =
+                    g_jobHandle.load(
+                        std::memory_order_acquire);
+
+                if (activeJob != nullptr)
+                {
+                    // This terminates yt-dlp AND any child processes such
+                    // as ffmpeg that it launched.
+                    TerminateJobObject(
+                        activeJob,
+                        1);
+                }
+                else
+                {
+                    TerminateProcess(
+                        processInfo.hProcess,
+                        1);
+                }
 
                 cancellationSent = true;
             }
@@ -491,27 +632,27 @@ namespace
                     rawLine.pop_back();
                 }
 
-                // yt-dlp normally emits UTF-8.
-                // Convert it to UTF-16 for Windows.
                 int wideLength =
                     MultiByteToWideChar(
                         CP_UTF8,
                         MB_ERR_INVALID_CHARS,
                         rawLine.data(),
-                        static_cast<int>(
-                            rawLine.size()),
+                        static_cast<int>(rawLine.size()),
                         nullptr,
                         0);
 
+                UINT codePage = CP_UTF8;
+
                 if (wideLength <= 0)
                 {
+                    codePage = CP_ACP;
+
                     wideLength =
                         MultiByteToWideChar(
-                            CP_ACP,
+                            codePage,
                             0,
                             rawLine.data(),
-                            static_cast<int>(
-                                rawLine.size()),
+                            static_cast<int>(rawLine.size()),
                             nullptr,
                             0);
                 }
@@ -525,24 +666,15 @@ namespace
                     wideLength,
                     L'\0');
 
-                if (MultiByteToWideChar(
-                    CP_UTF8,
-                    MB_ERR_INVALID_CHARS,
+                MultiByteToWideChar(
+                    codePage,
+                    (codePage == CP_UTF8)
+                        ? MB_ERR_INVALID_CHARS
+                        : 0,
                     rawLine.data(),
-                    static_cast<int>(
-                        rawLine.size()),
+                    static_cast<int>(rawLine.size()),
                     line.data(),
-                    wideLength) <= 0)
-                {
-                    MultiByteToWideChar(
-                        CP_ACP,
-                        0,
-                        rawLine.data(),
-                        static_cast<int>(
-                            rawLine.size()),
-                        line.data(),
-                        wideLength);
-                }
+                    wideLength);
 
                 line = Trim(line);
 
@@ -555,8 +687,7 @@ namespace
                     PostMessageW(
                         ownerWindow,
                         WM_APP_DOWNLOAD_PROGRESS,
-                        static_cast<WPARAM>(
-                            progress),
+                        static_cast<WPARAM>(progress),
                         0);
                 }
 
@@ -567,8 +698,7 @@ namespace
                     const size_t colon =
                         line.find(L':');
 
-                    if (colon !=
-                        std::wstring::npos)
+                    if (colon != std::wstring::npos)
                     {
                         const std::wstring destName =
                             Trim(line.substr(colon + 1));
@@ -580,9 +710,10 @@ namespace
                         const size_t nameSlash =
                             destName.find_last_of(L"\\/");
 
-                        finalFileName = (nameSlash != std::wstring::npos)
-                            ? destName.substr(nameSlash + 1)
-                            : destName;
+                        finalFileName =
+                            (nameSlash != std::wstring::npos)
+                                ? destName.substr(nameSlash + 1)
+                                : destName;
                     }
                 }
                 else if (line.find(
@@ -600,9 +731,10 @@ namespace
                         const size_t nameSlash =
                             destName.find_last_of(L"\\/");
 
-                        finalFileName = (nameSlash != std::wstring::npos)
-                            ? destName.substr(nameSlash + 1)
-                            : destName;
+                        finalFileName =
+                            (nameSlash != std::wstring::npos)
+                                ? destName.substr(nameSlash + 1)
+                                : destName;
                     }
 
                     PostStatus(
@@ -615,6 +747,7 @@ namespace
                 {
                     const size_t firstQuote =
                         line.find(L'"');
+
                     const size_t lastQuote =
                         line.find_last_of(L'"');
 
@@ -630,18 +763,18 @@ namespace
                         const size_t nameSlash =
                             destName.find_last_of(L"\\/");
 
-                        finalFileName = (nameSlash != std::wstring::npos)
-                            ? destName.substr(nameSlash + 1)
-                            : destName;
+                        finalFileName =
+                            (nameSlash != std::wstring::npos)
+                                ? destName.substr(nameSlash + 1)
+                                : destName;
                     }
 
                     PostStatus(
                         ownerWindow,
                         L"Merging video and audio...");
                 }
-                else if (line.find(
-                    L"ERROR:") !=
-                    std::wstring::npos)
+                else if (line.find(L"ERROR:") !=
+                         std::wstring::npos)
                 {
                     PostStatus(
                         ownerWindow,
@@ -662,12 +795,27 @@ namespace
             processInfo.hProcess,
             &exitCode);
 
+        const bool wasPaused =
+            g_pauseRequested.load();
+
+        const bool wasCancelled =
+            g_stopRequested.load();
+
+        g_processHandle.store(
+            nullptr,
+            std::memory_order_release);
+
+        g_jobHandle.store(
+            nullptr,
+            std::memory_order_release);
+
         CloseHandle(
             processInfo.hProcess);
 
-        g_processHandle = nullptr;
+        // Closing the job handle also enforces the job's
+        // KILL_ON_JOB_CLOSE behavior if anything unexpectedly remains.
+        CloseHandle(jobHandle);
 
-        const bool wasPaused = g_pauseRequested;
         std::wstring resolvedFilePath;
 
         if (wasPaused)
@@ -676,7 +824,7 @@ namespace
                 ownerWindow,
                 L"Paused.");
         }
-        else if (g_stopRequested)
+        else if (wasCancelled)
         {
             PostStatus(
                 ownerWindow,
@@ -708,27 +856,20 @@ namespace
 
             if (resolvedFilePath.empty())
             {
-                resolvedFilePath = FindNewestFileSince(
-                    downloadsFolder,
-                    downloadStartTime);
+                resolvedFilePath =
+                    FindNewestFileSince(
+                        downloadsFolder,
+                        downloadStartTime);
             }
         }
 
-        auto* info = new DownloadFinishedInfo;
-        info->exitCode = exitCode;
-        info->isMp3 = isMp3;
-        info->wasPaused = wasPaused;
-        info->downloadsFolder = downloadsFolder;
-        info->filePath = resolvedFilePath;
-
-        if (!PostMessageW(
+        PostFinished(
             ownerWindow,
-            WM_APP_DOWNLOAD_FINISHED,
-            0,
-            reinterpret_cast<LPARAM>(info)))
-        {
-            delete info;
-        }
+            exitCode,
+            isMp3,
+            wasPaused,
+            downloadsFolder,
+            resolvedFilePath);
 
         g_stopRequested = false;
         g_pauseRequested = false;
@@ -768,6 +909,8 @@ namespace DownloadManager
 
         g_stopRequested = false;
         g_pauseRequested = false;
+        g_processHandle.store(nullptr);
+        g_jobHandle.store(nullptr);
 
         const std::wstring ytDlpPath =
             GetYtDlpPath();
@@ -795,8 +938,7 @@ namespace DownloadManager
         const std::wstring downloadsFolder =
             GetDownloadsFolder(isMp3);
 
-        if (!EnsureFolderExists(
-            downloadsFolder))
+        if (!EnsureFolderExists(downloadsFolder))
         {
             g_downloadRunning = false;
 
@@ -835,8 +977,21 @@ namespace DownloadManager
 
         g_stopRequested = true;
 
+        HANDLE job =
+            g_jobHandle.load(
+                std::memory_order_acquire);
+
+        if (job != nullptr)
+        {
+            TerminateJobObject(
+                job,
+                1);
+            return;
+        }
+
         HANDLE process =
-            g_processHandle;
+            g_processHandle.load(
+                std::memory_order_acquire);
 
         if (process != nullptr)
         {
@@ -855,8 +1010,27 @@ namespace DownloadManager
 
         g_pauseRequested = true;
 
+        HANDLE job =
+            g_jobHandle.load(
+                std::memory_order_acquire);
+
+        if (job != nullptr)
+        {
+            // IMPORTANT:
+            // Pause is implemented as a clean stop of the entire yt-dlp
+            // process tree. The partial .part file remains on disk.
+            // Resume starts yt-dlp again with --continue.
+            TerminateJobObject(
+                job,
+                1);
+            return;
+        }
+
+        // Fallback for the very small window before the Job Object has
+        // been created/assigned.
         HANDLE process =
-            g_processHandle;
+            g_processHandle.load(
+                std::memory_order_acquire);
 
         if (process != nullptr)
         {
