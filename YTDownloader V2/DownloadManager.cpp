@@ -278,6 +278,7 @@ namespace
         DWORD exitCode,
         bool isMp3,
         bool wasPaused,
+        bool wasCancelled,
         const std::wstring& downloadsFolder,
         const std::wstring& filePath)
     {
@@ -286,6 +287,7 @@ namespace
         info->exitCode = exitCode;
         info->isMp3 = isMp3;
         info->wasPaused = wasPaused;
+        info->wasCancelled = wasCancelled;
         info->downloadsFolder = downloadsFolder;
         info->filePath = filePath;
 
@@ -360,6 +362,7 @@ namespace
                 ownerWindow,
                 PRE_LAUNCH_FAILURE_CODE,
                 isMp3,
+                false,
                 false,
                 downloadsFolder,
                 L"");
@@ -478,6 +481,7 @@ namespace
                 PRE_LAUNCH_FAILURE_CODE,
                 isMp3,
                 false,
+                false,
                 downloadsFolder,
                 L"");
 
@@ -507,6 +511,7 @@ namespace
                 ownerWindow,
                 PRE_LAUNCH_FAILURE_CODE,
                 isMp3,
+                false,
                 false,
                 downloadsFolder,
                 L"");
@@ -539,6 +544,7 @@ namespace
                 ownerWindow,
                 PRE_LAUNCH_FAILURE_CODE,
                 isMp3,
+                false,
                 false,
                 downloadsFolder,
                 L"");
@@ -868,6 +874,7 @@ namespace
             exitCode,
             isMp3,
             wasPaused,
+            wasCancelled,
             downloadsFolder,
             resolvedFilePath);
 

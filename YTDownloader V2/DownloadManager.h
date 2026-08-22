@@ -17,6 +17,7 @@ struct DownloadFinishedInfo
     DWORD exitCode = 1;
     bool isMp3 = false;
     bool wasPaused = false;
+    bool wasCancelled = false;
     std::wstring downloadsFolder;
     std::wstring filePath;
 };

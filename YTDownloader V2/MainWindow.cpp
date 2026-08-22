@@ -191,6 +191,7 @@ LRESULT MainWindow::HandleMessage(
             const std::wstring folder = info->downloadsFolder;
             const std::wstring filePath = info->filePath;
             const bool wasPaused = info->wasPaused;
+            const bool wasCancelled = info->wasCancelled;
 
             if (wasPaused)
             {
@@ -203,6 +204,17 @@ LRESULT MainWindow::HandleMessage(
                 if (m_statusLabel != nullptr)
                 {
                     SetWindowTextW(m_statusLabel, L"Paused.");
+                }
+            }
+            else if (wasCancelled)
+            {
+                // A deliberate cancel, not a real failure - back to the
+                // normal ready state, no error popup.
+                SetDownloadingState(false);
+
+                if (m_statusLabel != nullptr)
+                {
+                    SetWindowTextW(m_statusLabel, L"Download cancelled.");
                 }
             }
             else
