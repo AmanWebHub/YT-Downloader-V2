@@ -481,12 +481,27 @@ void MainWindow::OnDownloadClicked(HWND hwnd)
             0,
             0) == BST_CHECKED;
 
+    StartDownloadWithParams(hwnd, url, isMp3, playlistChoice == 1);
+}
+
+void MainWindow::StartDownloadWithParams(
+    HWND hwnd,
+    const std::wstring& url,
+    bool isMp3,
+    bool isPlaylist)
+{
     if (DownloadManager::StartDownload(
         hwnd,
         url,
         isMp3,
-        playlistChoice == 1))
+        isPlaylist))
     {
+        // Remember exactly what was started, so Resume can restart the
+        // same thing later without re-reading the UI or re-prompting.
+        m_lastUrl = url;
+        m_lastIsMp3 = isMp3;
+        m_lastIsPlaylist = isPlaylist;
+
         SendMessageW(
             m_progressBar,
             PBM_SETPOS,
@@ -521,9 +536,10 @@ void MainWindow::OnPauseResumeClicked(HWND hwnd)
     }
     else
     {
-        // Resume: just start the same download again - yt-dlp
-        // continues the partially-downloaded (.part) file by default.
+        // Resume: restart the exact same download that was paused -
+        // same URL, same format, same playlist choice. yt-dlp continues
+        // the partially-downloaded (.part) file(s) by default.
         m_isPaused = false;
-        OnDownloadClicked(hwnd);
+        StartDownloadWithParams(hwnd, m_lastUrl, m_lastIsMp3, m_lastIsPlaylist);
     }
 }

@@ -19,6 +19,7 @@ private:
     void OnCancelClicked();
     void OnPauseResumeClicked(HWND hwnd);
     void SetDownloadingState(bool downloading);
+    void StartDownloadWithParams(HWND hwnd, const std::wstring& url, bool isMp3, bool isPlaylist);
 
     // Returns 0 = single video, 1 = whole playlist, -1 = user cancelled.
     // Detects a playlist URL and asks the user which they want, unless
@@ -36,4 +37,11 @@ private:
 
     bool m_isPaused = false;
     std::wstring m_lastStatusText;
+
+    // Remembers exactly what the current/last download was, so Resume
+    // can restart it identically without re-prompting the playlist
+    // question or re-reading (possibly stale) UI state.
+    std::wstring m_lastUrl;
+    bool m_lastIsMp3 = false;
+    bool m_lastIsPlaylist = false;
 };
