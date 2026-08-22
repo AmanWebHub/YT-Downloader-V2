@@ -73,3 +73,4 @@ Playlist downloads were tested with the updated process-control and cleanup impl
 The tested download-control functionality is considered stable enough to commit to the repository.
 
 The next planned work is **code cleanup/refactoring**, with particular attention to `DownloadManager.cpp`. No additional feature development should be performed until the refactoring pass has been completed and retested.
+#
