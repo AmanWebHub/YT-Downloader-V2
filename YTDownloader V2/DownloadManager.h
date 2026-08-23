@@ -35,17 +35,13 @@ namespace DownloadManager
         bool isMp3,
         bool isPlaylist);
 
-    // Fully stops the current download.
+    // Permanently cancels the current download.
     //
-    // The partial .part files belonging to the current download
+    // Partial download files belonging to this download
     // are removed.
-    //
-    // This is a permanent cancellation and cannot be resumed.
     void CancelDownload();
 
-    // Stops the current download but keeps the partial .part files.
-    //
-    // A later StartDownload() using the same URL will use yt-dlp's
-    // --continue option to resume the download.
+    // Stops the current download while preserving partial
+    // files so that a later StartDownload() can resume it.
     void PauseDownload();
 }
