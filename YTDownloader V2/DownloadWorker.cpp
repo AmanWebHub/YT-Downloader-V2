@@ -12,6 +12,8 @@
 #include <vector>
 #include <algorithm>
 #include <cwctype>
+#include <sstream>
+#include <iomanip>
 
 namespace
 {
@@ -32,6 +34,33 @@ namespace
 
     constexpr wchar_t kManifestFilePrefix[] =
         L"FILE=";
+
+    constexpr wchar_t kManifestStartTimePrefix[] =
+        L"START_TIME=";
+
+    // Helper to convert FILETIME to a hex string for storage
+    std::wstring FileTimeToHex(const FILETIME& ft)
+    {
+        ULARGE_INTEGER ul;
+        ul.LowPart = ft.dwLowDateTime;
+        ul.HighPart = ft.dwHighDateTime;
+        std::wostringstream oss;
+        oss << std::hex << std::setw(16) << std::setfill(L'0') << ul.QuadPart;
+        return oss.str();
+    }
+
+    // Helper to parse hex string back to FILETIME
+    bool HexToFileTime(const std::wstring& hex, FILETIME& ft)
+    {
+        if (hex.size() != 16) return false;
+        ULARGE_INTEGER ul;
+        std::wistringstream iss(hex);
+        iss >> std::hex >> ul.QuadPart;
+        if (iss.fail()) return false;
+        ft.dwLowDateTime = ul.LowPart;
+        ft.dwHighDateTime = ul.HighPart;
+        return true;
+    }
 
     std::wstring BuildManifestPath(
         const std::wstring& downloadsFolder)
@@ -256,33 +285,34 @@ namespace
         return lines;
     }
 
-    bool ManifestMatchesSession(
+    // Structure returned by GetSessionInfo
+    struct SessionInfo
+    {
+        bool matches = false;
+        FILETIME startTime{};
+    };
+
+    SessionInfo GetSessionInfo(
         const std::wstring& manifestPath,
         const std::wstring& url,
         bool isMp3,
         bool isPlaylist)
     {
+        SessionInfo info;
         if (!FileExists(manifestPath))
-        {
-            return false;
-        }
+            return info;
 
         std::wstring content;
+        if (!ReadAllUtf8(manifestPath, content))
+            return info;
 
-        if (!ReadAllUtf8(
-                manifestPath,
-                content))
-        {
-            return false;
-        }
-
-        const std::vector<std::wstring> lines =
-            SplitLines(content);
+        const std::vector<std::wstring> lines = SplitLines(content);
 
         bool headerOk = false;
         bool urlOk = false;
         bool formatOk = false;
         bool playlistOk = false;
+        bool startTimeOk = false;
 
         for (const std::wstring& line : lines)
         {
@@ -290,51 +320,38 @@ namespace
             {
                 headerOk = true;
             }
-            else if (line.rfind(
-                         kManifestUrlPrefix,
-                         0) == 0)
+            else if (line.rfind(kManifestUrlPrefix, 0) == 0)
             {
-                urlOk =
-                    line.substr(
-                        wcslen(kManifestUrlPrefix)) == url;
+                urlOk = (line.substr(wcslen(kManifestUrlPrefix)) == url);
             }
-            else if (line.rfind(
-                         kManifestFormatPrefix,
-                         0) == 0)
+            else if (line.rfind(kManifestFormatPrefix, 0) == 0)
             {
-                const std::wstring value =
-                    line.substr(
-                        wcslen(kManifestFormatPrefix));
-
-                formatOk =
-                    value ==
-                    (isMp3 ? L"MP3" : L"MP4");
+                const std::wstring value = line.substr(wcslen(kManifestFormatPrefix));
+                formatOk = (value == (isMp3 ? L"MP3" : L"MP4"));
             }
-            else if (line.rfind(
-                         kManifestPlaylistPrefix,
-                         0) == 0)
+            else if (line.rfind(kManifestPlaylistPrefix, 0) == 0)
             {
-                const std::wstring value =
-                    line.substr(
-                        wcslen(kManifestPlaylistPrefix));
-
-                playlistOk =
-                    value ==
-                    (isPlaylist ? L"1" : L"0");
+                const std::wstring value = line.substr(wcslen(kManifestPlaylistPrefix));
+                playlistOk = (value == (isPlaylist ? L"1" : L"0"));
+            }
+            else if (line.rfind(kManifestStartTimePrefix, 0) == 0)
+            {
+                const std::wstring hex = line.substr(wcslen(kManifestStartTimePrefix));
+                if (HexToFileTime(hex, info.startTime))
+                    startTimeOk = true;
             }
         }
 
-        return headerOk &&
-               urlOk &&
-               formatOk &&
-               playlistOk;
+        info.matches = headerOk && urlOk && formatOk && playlistOk && startTimeOk;
+        return info;
     }
 
     bool CreateNewManifest(
         const std::wstring& manifestPath,
         const std::wstring& url,
         bool isMp3,
-        bool isPlaylist)
+        bool isPlaylist,
+        const FILETIME& startTime)
     {
         DeleteFileW(manifestPath.c_str());
 
@@ -356,14 +373,9 @@ namespace
         const bool ok =
             WriteUtf8Line(file, kManifestHeader) &&
             WriteUtf8Line(file, kManifestUrlPrefix + url) &&
-            WriteUtf8Line(
-                file,
-                kManifestFormatPrefix +
-                std::wstring(isMp3 ? L"MP3" : L"MP4")) &&
-            WriteUtf8Line(
-                file,
-                kManifestPlaylistPrefix +
-                std::wstring(isPlaylist ? L"1" : L"0"));
+            WriteUtf8Line(file, kManifestFormatPrefix + std::wstring(isMp3 ? L"MP3" : L"MP4")) &&
+            WriteUtf8Line(file, kManifestPlaylistPrefix + std::wstring(isPlaylist ? L"1" : L"0")) &&
+            WriteUtf8Line(file, kManifestStartTimePrefix + FileTimeToHex(startTime));
 
         FlushFileBuffers(file);
         CloseHandle(file);
@@ -474,19 +486,11 @@ namespace
             return;
         }
 
-        // Record only paths that yt-dlp actually reported. Do not
-        // manufacture alternative filenames from the title: yt-dlp
-        // can sanitize characters differently for different stages
-        // (for example, a full-width punctuation character can be
-        // represented differently in console output and on disk).
         RecordManifestFile(
             manifestPath,
             destination,
             files);
 
-        // These sidecars are deterministic once the exact destination
-        // is known, and are safe to track because they belong to that
-        // exact path.
         RecordManifestFile(
             manifestPath,
             destination + L".part",
@@ -661,15 +665,9 @@ namespace
         }
     }
 
-    // Safety net independent of the manifest. A cancellation can
-    // happen before yt-dlp's output reaches our parser, or yt-dlp can
-    // sanitize a title differently between stages. Scan only files
-    // written since this session started. Partial/thumbnail artifacts
-    // are always eligible; completed media files are eligible only when
-    // their normalized title matches a destination reported by yt-dlp.
     void ScanAndDeleteRecentPartialArtifacts(
         const std::wstring& downloadsFolder,
-        const FILETIME& downloadStartTime,
+        const FILETIME& sessionStartTime,
         const std::vector<std::wstring>& trackedDestinations)
     {
         const std::wstring searchPattern =
@@ -692,8 +690,8 @@ namespace
         }
 
         ULARGE_INTEGER startTimeValue{};
-        startTimeValue.LowPart = downloadStartTime.dwLowDateTime;
-        startTimeValue.HighPart = downloadStartTime.dwHighDateTime;
+        startTimeValue.LowPart = sessionStartTime.dwLowDateTime;
+        startTimeValue.HighPart = sessionStartTime.dwHighDateTime;
 
         int deletedCount = 0;
 
@@ -767,12 +765,296 @@ namespace
             std::to_wstring(deletedCount));
     }
 
+    void DeleteCompletedMp3WebmFile(
+        const std::wstring& path)
+    {
+        if (path.empty())
+        {
+            return;
+        }
+
+        SetLastError(ERROR_SUCCESS);
+
+        if (DeleteFileW(path.c_str()))
+        {
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                L"Deleted completed MP3 intermediate file: " +
+                path);
+            return;
+        }
+
+        const DWORD errorCode = GetLastError();
+
+        if (errorCode == ERROR_FILE_NOT_FOUND ||
+            errorCode == ERROR_PATH_NOT_FOUND)
+        {
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                L"Completed MP3 intermediate file already absent: " +
+                path);
+        }
+        else
+        {
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                L"Failed to delete completed MP3 intermediate file (error " +
+                std::to_wstring(errorCode) +
+                L"): " +
+                path);
+        }
+    }
+
+    void CleanupCompletedMp3IntermediateFiles(
+        const std::vector<std::wstring>& trackedFiles,
+        const std::vector<std::wstring>& trackedDestinations,
+        const std::wstring& downloadsFolder,
+        const FILETIME& sessionStartTime)
+    {
+        for (const std::wstring& path : trackedFiles)
+        {
+            if (path.empty())
+            {
+                continue;
+            }
+
+            const size_t dot =
+                path.find_last_of(L'.');
+
+            if (dot == std::wstring::npos)
+            {
+                continue;
+            }
+
+            const std::wstring extension =
+                path.substr(dot);
+
+            const bool isWebm =
+                _wcsicmp(extension.c_str(), L".webm") == 0;
+
+            const bool isWebmPart =
+                path.size() >= 9 &&
+                _wcsicmp(
+                    path.c_str() + path.size() - 9,
+                    L".webm.part") == 0;
+
+            if (isWebm || isWebmPart)
+            {
+                DeleteCompletedMp3WebmFile(path);
+            }
+        }
+
+        if (downloadsFolder.empty() || trackedDestinations.empty())
+        {
+            return;
+        }
+
+        const std::wstring searchPattern =
+            downloadsFolder + L"\\*";
+
+        WIN32_FIND_DATAW findData{};
+
+        HANDLE findHandle =
+            FindFirstFileW(
+                searchPattern.c_str(),
+                &findData);
+
+        if (findHandle == INVALID_HANDLE_VALUE)
+        {
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                L"CleanupCompletedMp3IntermediateFiles: could not enumerate folder.");
+            return;
+        }
+
+        ULARGE_INTEGER startTimeValue{};
+        startTimeValue.LowPart = sessionStartTime.dwLowDateTime;
+        startTimeValue.HighPart = sessionStartTime.dwHighDateTime;
+
+        int deletedCount = 0;
+
+        do
+        {
+            if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            {
+                continue;
+            }
+
+            const std::wstring name =
+                findData.cFileName;
+
+            const bool isWebm =
+                name.size() >= 5 &&
+                _wcsicmp(
+                    name.c_str() + name.size() - 5,
+                    L".webm") == 0;
+
+            const bool isWebmPart =
+                name.size() >= 9 &&
+                _wcsicmp(
+                    name.c_str() + name.size() - 9,
+                    L".webm.part") == 0;
+
+            if (!isWebm && !isWebmPart)
+            {
+                continue;
+            }
+
+            ULARGE_INTEGER fileTimeValue{};
+            fileTimeValue.LowPart =
+                findData.ftLastWriteTime.dwLowDateTime;
+            fileTimeValue.HighPart =
+                findData.ftLastWriteTime.dwHighDateTime;
+
+            if (fileTimeValue.QuadPart + 20000000ULL <
+                startTimeValue.QuadPart)
+            {
+                continue;
+            }
+
+            if (!HasTrackedStem(
+                    name,
+                    trackedDestinations))
+            {
+                continue;
+            }
+
+            const std::wstring fullPath =
+                downloadsFolder + L"\\" + name;
+
+            SetLastError(ERROR_SUCCESS);
+
+            if (DeleteFileW(fullPath.c_str()))
+            {
+                DownloadLogger::Write(
+                    L"DownloadWorker",
+                    L"Completed MP3 scan deleted WebM intermediate: " +
+                    fullPath);
+                ++deletedCount;
+            }
+            else
+            {
+                const DWORD errorCode = GetLastError();
+
+                if (errorCode != ERROR_FILE_NOT_FOUND &&
+                    errorCode != ERROR_PATH_NOT_FOUND)
+                {
+                    DownloadLogger::Write(
+                        L"DownloadWorker",
+                        L"Completed MP3 scan FAILED to delete WebM (error " +
+                        std::to_wstring(errorCode) +
+                        L"): " +
+                        fullPath);
+                }
+            }
+
+        } while (FindNextFileW(findHandle, &findData));
+
+        FindClose(findHandle);
+
+        DownloadLogger::Write(
+            L"DownloadWorker",
+            L"Completed MP3 WebM scan finished. Files deleted: " +
+            std::to_wstring(deletedCount));
+    }
+
+    // Third pass: delete any .webm or .webm.part with the same stem as the final MP3,
+    // using the original session start time.
+    void CleanupLeftoverWebmFiles(
+        const std::wstring& downloadsFolder,
+        const std::wstring& finalFilePath,
+        const FILETIME& sessionStartTime)
+    {
+        if (finalFilePath.empty() || downloadsFolder.empty())
+            return;
+
+        std::wstring finalStem = GetFileStem(finalFilePath);
+        if (finalStem.empty())
+            return;
+
+        std::wstring searchPattern = downloadsFolder + L"\\*";
+        WIN32_FIND_DATAW findData{};
+        HANDLE findHandle = FindFirstFileW(searchPattern.c_str(), &findData);
+        if (findHandle == INVALID_HANDLE_VALUE)
+        {
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                L"CleanupLeftoverWebmFiles: could not enumerate folder.");
+            return;
+        }
+
+        ULARGE_INTEGER startTimeValue{};
+        startTimeValue.LowPart = sessionStartTime.dwLowDateTime;
+        startTimeValue.HighPart = sessionStartTime.dwHighDateTime;
+
+        int deletedCount = 0;
+
+        do
+        {
+            if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                continue;
+
+            std::wstring name = findData.cFileName;
+
+            bool isWebm = false;
+            if (name.size() >= 5 &&
+                _wcsicmp(name.c_str() + name.size() - 5, L".webm") == 0)
+                isWebm = true;
+            else if (name.size() >= 9 &&
+                     _wcsicmp(name.c_str() + name.size() - 9, L".webm.part") == 0)
+                isWebm = true;
+
+            if (!isWebm)
+                continue;
+
+            ULARGE_INTEGER fileTimeValue{};
+            fileTimeValue.LowPart = findData.ftLastWriteTime.dwLowDateTime;
+            fileTimeValue.HighPart = findData.ftLastWriteTime.dwHighDateTime;
+            if (fileTimeValue.QuadPart + 20000000ULL < startTimeValue.QuadPart)
+                continue;
+
+            std::wstring candidateStem = GetFileStem(name);
+            if (NormalizeFileNameForMatch(candidateStem) != NormalizeFileNameForMatch(finalStem))
+                continue;
+
+            std::wstring fullPath = downloadsFolder + L"\\" + name;
+            bool deleted = false;
+            for (int attempt = 0; attempt < 3; ++attempt)
+            {
+                if (DeleteFileW(fullPath.c_str()))
+                {
+                    deleted = true;
+                    break;
+                }
+                Sleep(50);
+            }
+
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                deleted
+                    ? L"Leftover WebM cleanup deleted: " + fullPath
+                    : L"Leftover WebM cleanup FAILED (error " +
+                      std::to_wstring(GetLastError()) + L"): " + fullPath);
+
+            if (deleted)
+                ++deletedCount;
+
+        } while (FindNextFileW(findHandle, &findData));
+
+        FindClose(findHandle);
+
+        DownloadLogger::Write(
+            L"DownloadWorker",
+            L"CleanupLeftoverWebmFiles finished. Deleted: " +
+            std::to_wstring(deletedCount));
+    }
+
     void CleanupCancelledSession(
         const std::wstring& manifestPath,
         const std::vector<std::wstring>& trackedFiles,
         const std::vector<std::wstring>& trackedDestinations,
         const std::wstring& downloadsFolder,
-        const FILETIME& downloadStartTime)
+        const FILETIME& sessionStartTime)
     {
         DownloadLogger::Write(
             L"DownloadWorker",
@@ -782,12 +1064,6 @@ namespace
         std::vector<std::wstring> files =
             trackedFiles;
 
-        /*
-            Reload the manifest after the process has terminated.
-            The manifest is the durable record for this download
-            session, so cleanup does not depend on the worker's
-            in-memory state alone.
-        */
         std::vector<std::wstring> persistedFiles;
 
         LoadManifestFiles(
@@ -811,35 +1087,17 @@ namespace
             }
         }
 
-        /*
-            Delete files explicitly recorded by this session first -
-            this is the "safe" pass, since it can never touch an
-            unrelated file with a matching name.
-        */
         DeleteManifestFiles(files);
 
-        /*
-            The process tree has already terminated before this
-            function is called. Give the filesystem a very short
-            settling period, then repeat the exact recorded-file
-            deletion once.
-        */
         Sleep(100);
         DeleteManifestFiles(files);
 
         DeleteFileW(
             manifestPath.c_str());
 
-        /*
-            Safety net: if the cancel happened before yt-dlp's output
-            was ever parsed, the manifest above may be empty even
-            though a partial file already exists on disk. Scan the
-            folder directly for anything matching, created since this
-            download started.
-        */
         ScanAndDeleteRecentPartialArtifacts(
             downloadsFolder,
-            downloadStartTime,
+            sessionStartTime,
             trackedDestinations);
 
         DownloadLogger::Write(
@@ -963,11 +1221,6 @@ namespace
                 continue;
             }
 
-            // The marker already includes the trailing colon.
-            // Do NOT search for another colon here: a normal Windows
-            // absolute path starts with "C:\", and doing so would
-            // strip the drive letter and turn "C:\Users\..." into
-            // "\Users\...".
             return DownloadUtils::Trim(
                 line.substr(markerPos + marker.size()));
         }
@@ -1023,21 +1276,10 @@ namespace
 
         if (isMp3)
         {
-            // A single audio stream - --continue resumes this
-            // reliably, since there's no merge step involved.
             commandLine += L"--continue ";
         }
         else
         {
-            // Video uses "-f bv*+ba/b", which downloads separate
-            // video/audio streams and merges them with ffmpeg.
-            // --continue does not reliably resume this: if a pause
-            // lands near the merge step, yt-dlp can treat a component
-            // file as "already complete" when it isn't fully usable,
-            // and ffprobe then fails to read its audio codec during
-            // postprocessing (resulting in a broken/incomplete file
-            // left as .webm instead of the final .mp4). Doing a full,
-            // clean restart avoids that failure mode entirely.
             commandLine +=
                 L"--no-continue "
                 L"--force-overwrites ";
@@ -1065,20 +1307,6 @@ namespace
         }
         else
         {
-            /*
-                Prefer MP4-compatible streams so the normal result is
-                an MP4 file. The previous "bv*+ba/b" allowed yt-dlp to
-                fall back to a WebM-only progressive format. In that
-                case there was nothing to merge, so the final file kept
-                the .webm extension.
-
-                Prefer:
-                  video: MP4
-                  audio: M4A
-                and fall back to a progressive MP4. When separate
-                streams are selected, explicitly request MP4 as the
-                merge container.
-            */
             commandLine +=
                 L"-f \"bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]\" "
                 L"--merge-output-format mp4 ";
@@ -1120,29 +1348,26 @@ namespace DownloadWorker
 
         std::vector<std::wstring> manifestFiles;
 
-        /*
-            A matching manifest means this is a continuation of the
-            same paused session. A different manifest is stale and
-            is replaced so a new download cannot inherit another
-            download's files.
-        */
-        if (ManifestMatchesSession(
-                manifestPath,
-                url,
-                isMp3,
-                isPlaylist))
+        FILETIME originalStartTime{};
+        bool hasOriginalStartTime = false;
+
+        // Check for existing manifest
+        SessionInfo sessionInfo = GetSessionInfo(manifestPath, url, isMp3, isPlaylist);
+        if (sessionInfo.matches)
         {
-            LoadManifestFiles(
-                manifestPath,
-                manifestFiles);
+            LoadManifestFiles(manifestPath, manifestFiles);
+            originalStartTime = sessionInfo.startTime;
+            hasOriginalStartTime = true;
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                L"Resuming existing session with original start time.");
         }
         else
         {
-            if (!CreateNewManifest(
-                    manifestPath,
-                    url,
-                    isMp3,
-                    isPlaylist))
+            // New session: capture start time now
+            GetSystemTimeAsFileTime(&originalStartTime);
+            hasOriginalStartTime = true;
+            if (!CreateNewManifest(manifestPath, url, isMp3, isPlaylist, originalStartTime))
             {
                 DownloadOutput::PostStatus(
                     ownerWindow,
@@ -1221,9 +1446,7 @@ namespace DownloadWorker
 
         PROCESS_INFORMATION processInfo{};
         FILETIME downloadStartTime{};
-
-        GetSystemTimeAsFileTime(
-            &downloadStartTime);
+        GetSystemTimeAsFileTime(&downloadStartTime);
 
         const BOOL created =
             CreateProcessW(
@@ -1454,97 +1677,169 @@ namespace DownloadWorker
 
         CloseHandle(processInfo.hProcess);
 
-        /*
-            Closing the job handle also enforces
-            KILL_ON_JOB_CLOSE if anything unexpectedly remains.
-        */
         CloseHandle(jobHandle);
 
         std::wstring resolvedFilePath;
 
         if (wasPaused)
         {
-            /*
-                Pause deliberately keeps the manifest and all partial
-                files. The next StartDownload() recognizes the matching
-                manifest and continues the same session.
-            */
             DownloadOutput::PostStatus(
                 ownerWindow,
                 L"Paused.");
         }
         else if (wasCancelled)
         {
-            /*
-                Cancellation is permanent. The session manifest is now
-                the authoritative cleanup record.
-            */
             CleanupCancelledSession(
                 manifestPath,
                 manifestFiles,
                 trackedDestinations,
                 downloadsFolder,
-                downloadStartTime);
+                originalStartTime);
 
             DownloadOutput::PostStatus(
                 ownerWindow,
                 L"Download cancelled.");
         }
-        else if (exitCode == 0)
+        else
         {
-            PostMessageW(
-                ownerWindow,
-                WM_APP_DOWNLOAD_PROGRESS,
-                100,
-                0);
+            // Determine if we have a valid final file, even if exitCode != 0 (for MP3)
+            bool hasValidFile = false;
 
-            DownloadOutput::PostStatus(
-                ownerWindow,
-                L"Download complete.");
-
+            // First, try using finalFileName from parser
             if (!finalFileName.empty())
             {
                 const std::wstring candidate =
-                    downloadsFolder +
-                    L"\\" +
-                    finalFileName;
-
-                if (GetFileAttributesW(
-                        candidate.c_str()) !=
-                    INVALID_FILE_ATTRIBUTES)
+                    downloadsFolder + L"\\" + finalFileName;
+                if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES)
                 {
-                    resolvedFilePath =
-                        candidate;
+                    resolvedFilePath = candidate;
+                    hasValidFile = true;
                 }
             }
 
-            if (resolvedFilePath.empty())
+            // If not found, scan for a .mp3 file created since the original start time
+            if (!hasValidFile && isMp3)
             {
-                /*
-                    Do not let the session manifest itself become the
-                    "newest file" fallback result.
-                */
-                DeleteFileW(
-                    manifestPath.c_str());
+                // Use FindNewestFileSince but filter for .mp3 extension
+                const std::wstring searchPattern = downloadsFolder + L"\\*";
+                WIN32_FIND_DATAW findData{};
+                HANDLE findHandle = FindFirstFileW(searchPattern.c_str(), &findData);
+                if (findHandle != INVALID_HANDLE_VALUE)
+                {
+                    ULARGE_INTEGER startTimeValue{};
+                    startTimeValue.LowPart = originalStartTime.dwLowDateTime;
+                    startTimeValue.HighPart = originalStartTime.dwHighDateTime;
 
-                resolvedFilePath =
-                    DownloadUtils::FindNewestFileSince(
+                    std::wstring bestPath;
+                    ULARGE_INTEGER bestTime{};
+                    bestTime.QuadPart = 0;
+
+                    do
+                    {
+                        if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                            continue;
+
+                        const std::wstring name = findData.cFileName;
+                        const size_t dot = name.find_last_of(L'.');
+                        if (dot == std::wstring::npos)
+                            continue;
+                        if (_wcsicmp(name.substr(dot).c_str(), L".mp3") != 0)
+                            continue;
+
+                        ULARGE_INTEGER fileTime{};
+                        fileTime.LowPart = findData.ftLastWriteTime.dwLowDateTime;
+                        fileTime.HighPart = findData.ftLastWriteTime.dwHighDateTime;
+
+                        // Must be created after the start (with 2s tolerance)
+                        if (fileTime.QuadPart + 20000000ULL < startTimeValue.QuadPart)
+                            continue;
+
+                        if (fileTime.QuadPart > bestTime.QuadPart)
+                        {
+                            bestTime = fileTime;
+                            bestPath = downloadsFolder + L"\\" + name;
+                        }
+                    } while (FindNextFileW(findHandle, &findData));
+                    FindClose(findHandle);
+
+                    if (!bestPath.empty() && DownloadUtils::FileExists(bestPath))
+                    {
+                        resolvedFilePath = bestPath;
+                        hasValidFile = true;
+                        // Also update finalFileName for cleanup
+                        if (finalFileName.empty())
+                        {
+                            const size_t slash = bestPath.find_last_of(L"\\/");
+                            finalFileName = (slash != std::wstring::npos) ? bestPath.substr(slash + 1) : bestPath;
+                        }
+                    }
+                }
+            }
+
+            // Now decide what to do
+            if (exitCode == 0 || (isMp3 && hasValidFile))
+            {
+                // Success path
+                PostMessageW(
+                    ownerWindow,
+                    WM_APP_DOWNLOAD_PROGRESS,
+                    100,
+                    0);
+
+                DownloadOutput::PostStatus(
+                    ownerWindow,
+                    L"Download complete.");
+
+                // If we didn't have resolvedFilePath from earlier, we have it now
+                // (but we already set it above)
+
+                DeleteFileW(manifestPath.c_str());
+
+                if (isMp3)
+                {
+                    // Pass 1: remove WebM files tracked in the manifest
+                    CleanupCompletedMp3IntermediateFiles(
+                        manifestFiles,
+                        trackedDestinations,
                         downloadsFolder,
-                        downloadStartTime);
+                        originalStartTime);
+
+                    Sleep(100);
+
+                    // Pass 2: scan with tracked destinations
+                    CleanupCompletedMp3IntermediateFiles(
+                        {},
+                        trackedDestinations,
+                        downloadsFolder,
+                        originalStartTime);
+
+                    // Pass 3: leftover .webm matching final stem
+                    CleanupLeftoverWebmFiles(
+                        downloadsFolder,
+                        resolvedFilePath,
+                        originalStartTime);
+                }
+
+                DeleteFileW(manifestPath.c_str());
             }
             else
             {
-                DeleteFileW(
-                    manifestPath.c_str());
-            }
+                // Real failure
+                DownloadOutput::PostStatus(
+                    ownerWindow,
+                    L"Download failed.");
 
-            /*
-                A successful session is finished. Do not leave the
-                transaction/manifest behind because a later download
-                must start with a clean session.
-            */
-            DeleteFileW(
-                manifestPath.c_str());
+                // Clean up partial files
+                CleanupCancelledSession(
+                    manifestPath,
+                    manifestFiles,
+                    trackedDestinations,
+                    downloadsFolder,
+                    originalStartTime);
+
+                // We'll still send a failure, but resolvedFilePath empty
+                resolvedFilePath.clear();
+            }
         }
 
         DownloadOutput::PostFinished(
