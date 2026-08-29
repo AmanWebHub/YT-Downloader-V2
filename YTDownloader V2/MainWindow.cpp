@@ -2,6 +2,7 @@
 #include "resource.h"
 #include "DownloadManager.h"
 #include "CompletionWindow.h"
+#include "DownloadLogger.h"
 
 #include <commctrl.h>
 
@@ -17,6 +18,10 @@ bool MainWindow::Create(
     int nCmdShow,
     const std::wstring& initialUrl)
 {
+    DownloadLogger::Write(
+        L"MainWindow",
+        L"Create() called.");
+
     m_hInstance = hInstance;
 
     INITCOMMONCONTROLSEX commonControls{};
@@ -50,6 +55,10 @@ bool MainWindow::Create(
 
     if (m_hwnd == nullptr)
     {
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"CreateWindowExW() FAILED.");
+
         MessageBoxW(
             nullptr,
             L"Failed to create the main window.",
@@ -64,10 +73,18 @@ bool MainWindow::Create(
         SetWindowTextW(
             m_urlEdit,
             initialUrl.c_str());
+
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"Initial URL supplied.");
     }
 
     ShowWindow(m_hwnd, nCmdShow);
     UpdateWindow(m_hwnd);
+
+    DownloadLogger::Write(
+        L"MainWindow",
+        L"Main window created and shown.");
 
     return true;
 }
@@ -125,6 +142,10 @@ LRESULT MainWindow::HandleMessage(
     switch (uMsg)
     {
     case WM_CREATE:
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"WM_CREATE received.");
+
         CreateControls(hwnd);
         return 0;
 
@@ -134,12 +155,26 @@ LRESULT MainWindow::HandleMessage(
             switch (LOWORD(wParam))
             {
             case IDC_DOWNLOAD_BTN:
+                DownloadLogger::Write(
+                    L"MainWindow",
+                    L"Download button clicked.");
+
                 OnDownloadClicked(hwnd);
                 return 0;
+
             case IDC_CANCEL_BTN:
+                DownloadLogger::Write(
+                    L"MainWindow",
+                    L"Cancel button clicked.");
+
                 OnCancelClicked();
                 return 0;
+
             case IDC_PAUSE_BTN:
+                DownloadLogger::Write(
+                    L"MainWindow",
+                    L"Pause/Resume button clicked.");
+
                 OnPauseResumeClicked(hwnd);
                 return 0;
             }
@@ -182,6 +217,10 @@ LRESULT MainWindow::HandleMessage(
 
     case WM_APP_DOWNLOAD_FINISHED:
     {
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"WM_APP_DOWNLOAD_FINISHED received.");
+
         auto* info =
             reinterpret_cast<DownloadFinishedInfo*>(lParam);
 
@@ -193,10 +232,21 @@ LRESULT MainWindow::HandleMessage(
             const bool wasPaused = info->wasPaused;
             const bool wasCancelled = info->wasCancelled;
 
+            DownloadLogger::Write(
+                L"MainWindow",
+                L"Finished info: exitCode=" +
+                std::to_wstring(exitCode));
+
+            DownloadLogger::Write(
+                L"MainWindow",
+                wasPaused
+                    ? L"Finished state: PAUSED."
+                    : wasCancelled
+                        ? L"Finished state: CANCELLED."
+                        : L"Finished state: COMPLETE/FAILED.");
+
             if (wasPaused)
             {
-                // Stay in a "paused" state: Cancel remains available,
-                // Pause becomes Resume. Nothing else changes.
                 m_isPaused = true;
                 EnableWindow(m_pauseButton, TRUE);
                 SetWindowTextW(m_pauseButton, L"Resume");
@@ -208,13 +258,17 @@ LRESULT MainWindow::HandleMessage(
             }
             else if (wasCancelled)
             {
-                // A deliberate cancel, not a real failure - back to the
-                // normal ready state, no error popup.
+                DownloadLogger::Write(
+                    L"MainWindow",
+                    L"Processing cancellation result.");
+
                 SetDownloadingState(false);
 
                 if (m_statusLabel != nullptr)
                 {
-                    SetWindowTextW(m_statusLabel, L"Download cancelled.");
+                    SetWindowTextW(
+                        m_statusLabel,
+                        L"Download cancelled.");
                 }
             }
             else
@@ -229,6 +283,10 @@ LRESULT MainWindow::HandleMessage(
                             m_statusLabel,
                             L"Download complete.");
                     }
+
+                    DownloadLogger::Write(
+                        L"MainWindow",
+                        L"Creating completion window.");
 
                     CompletionWindow::Create(
                         m_hInstance,
@@ -272,7 +330,16 @@ LRESULT MainWindow::HandleMessage(
     }
 
     case WM_DESTROY:
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"WM_DESTROY received. Requesting download cancellation.");
+
         DownloadManager::CancelDownload();
+
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"Posting WM_QUIT.");
+
         PostQuitMessage(0);
         return 0;
     }
@@ -286,6 +353,10 @@ LRESULT MainWindow::HandleMessage(
 
 void MainWindow::CreateControls(HWND hwnd)
 {
+    DownloadLogger::Write(
+        L"MainWindow",
+        L"Creating controls.");
+
     CreateWindowW(
         L"STATIC",
         L"Video URL:",
@@ -407,10 +478,20 @@ void MainWindow::CreateControls(HWND hwnd)
         (HMENU)IDC_STATUS,
         nullptr,
         nullptr);
+
+    DownloadLogger::Write(
+        L"MainWindow",
+        L"Controls created.");
 }
 
 void MainWindow::SetDownloadingState(bool downloading)
 {
+    DownloadLogger::Write(
+        L"MainWindow",
+        downloading
+            ? L"SetDownloadingState(true)."
+            : L"SetDownloadingState(false).");
+
     ShowWindow(m_downloadButton, downloading ? SW_HIDE : SW_SHOW);
     ShowWindow(m_cancelButton, downloading ? SW_SHOW : SW_HIDE);
     ShowWindow(m_pauseButton, downloading ? SW_SHOW : SW_HIDE);
@@ -440,22 +521,26 @@ void MainWindow::SetDownloadingState(bool downloading)
         downloading ? FALSE : TRUE);
 }
 
-int MainWindow::ResolvePlaylistChoice(HWND hwnd, const std::wstring& url)
+int MainWindow::ResolvePlaylistChoice(
+    HWND hwnd,
+    const std::wstring& url)
 {
-    const bool hasList = url.find(L"list=") != std::wstring::npos;
-    const bool hasVideo = url.find(L"v=") != std::wstring::npos;
+    const bool hasList =
+        url.find(L"list=") != std::wstring::npos;
+
+    const bool hasVideo =
+        url.find(L"v=") != std::wstring::npos;
 
     if (!hasList)
     {
-        return 0; // no playlist involved at all
+        return 0;
     }
 
     if (!hasVideo)
     {
-        return 1; // a pure playlist URL - unambiguous
+        return 1;
     }
 
-    // Both present: a specific video that's also part of a playlist.
     const int result = MessageBoxW(
         hwnd,
         L"This video is part of a playlist.\n\n"
@@ -471,6 +556,10 @@ int MainWindow::ResolvePlaylistChoice(HWND hwnd, const std::wstring& url)
 
 void MainWindow::OnDownloadClicked(HWND hwnd)
 {
+    DownloadLogger::Write(
+        L"MainWindow",
+        L"OnDownloadClicked() called.");
+
     wchar_t urlBuffer[2048]{};
 
     GetWindowTextW(
@@ -480,10 +569,16 @@ void MainWindow::OnDownloadClicked(HWND hwnd)
 
     const std::wstring url = urlBuffer;
 
-    const int playlistChoice = ResolvePlaylistChoice(hwnd, url);
+    const int playlistChoice =
+        ResolvePlaylistChoice(hwnd, url);
+
     if (playlistChoice == -1)
     {
-        return; // user cancelled the playlist prompt
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"Playlist selection cancelled by user.");
+
+        return;
     }
 
     const bool isMp3 =
@@ -493,7 +588,17 @@ void MainWindow::OnDownloadClicked(HWND hwnd)
             0,
             0) == BST_CHECKED;
 
-    StartDownloadWithParams(hwnd, url, isMp3, playlistChoice == 1);
+    DownloadLogger::Write(
+        L"MainWindow",
+        isMp3
+            ? L"Selected format: MP3."
+            : L"Selected format: MP4.");
+
+    StartDownloadWithParams(
+        hwnd,
+        url,
+        isMp3,
+        playlistChoice == 1);
 }
 
 void MainWindow::StartDownloadWithParams(
@@ -502,14 +607,16 @@ void MainWindow::StartDownloadWithParams(
     bool isMp3,
     bool isPlaylist)
 {
+    DownloadLogger::Write(
+        L"MainWindow",
+        L"StartDownloadWithParams() called.");
+
     if (DownloadManager::StartDownload(
         hwnd,
         url,
         isMp3,
         isPlaylist))
     {
-        // Remember exactly what was started, so Resume can restart the
-        // same thing later without re-reading the UI or re-prompting.
         m_lastUrl = url;
         m_lastIsMp3 = isMp3;
         m_lastIsPlaylist = isPlaylist;
@@ -525,33 +632,67 @@ void MainWindow::StartDownloadWithParams(
             L"Starting download...");
 
         SetDownloadingState(true);
+
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"Download accepted and UI switched to downloading state.");
+    }
+    else
+    {
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"Download was not started.");
     }
 }
 
 void MainWindow::OnCancelClicked()
 {
+    DownloadLogger::Write(
+        L"MainWindow",
+        L"OnCancelClicked() called.");
+
     DownloadManager::CancelDownload();
+
     EnableWindow(m_cancelButton, FALSE);
     EnableWindow(m_pauseButton, FALSE);
-    SetWindowTextW(m_statusLabel, L"Cancelling...");
+
+    SetWindowTextW(
+        m_statusLabel,
+        L"Cancelling...");
+
+    DownloadLogger::Write(
+        L"MainWindow",
+        L"Cancel UI updated to 'Cancelling...'.");
 }
 
 void MainWindow::OnPauseResumeClicked(HWND hwnd)
 {
     if (!m_isPaused)
     {
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"Pause requested.");
+
         DownloadManager::PauseDownload();
+
         EnableWindow(m_pauseButton, FALSE);
-        SetWindowTextW(m_statusLabel, L"Pausing...");
-        // m_isPaused and the button text get set once
-        // WM_APP_DOWNLOAD_FINISHED confirms the pause actually happened.
+
+        SetWindowTextW(
+            m_statusLabel,
+            L"Pausing...");
     }
     else
     {
-        // Resume: restart the exact same download that was paused -
-        // same URL, same format, same playlist choice. yt-dlp continues
-        // the partially-downloaded (.part) file(s) by default.
+        DownloadLogger::Write(
+            L"MainWindow",
+            L"Resume requested.");
+
         m_isPaused = false;
-        StartDownloadWithParams(hwnd, m_lastUrl, m_lastIsMp3, m_lastIsPlaylist);
+
+        StartDownloadWithParams(
+            hwnd,
+            m_lastUrl,
+            m_lastIsMp3,
+            m_lastIsPlaylist);
     }
 }
