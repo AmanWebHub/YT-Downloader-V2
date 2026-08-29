@@ -11,7 +11,6 @@
 #include <string>
 #include <vector>
 #include <algorithm>
-#include <cwctype>
 
 namespace
 {
@@ -474,19 +473,17 @@ namespace
             return;
         }
 
-        // Record only paths that yt-dlp actually reported. Do not
-        // manufacture alternative filenames from the title: yt-dlp
-        // can sanitize characters differently for different stages
-        // (for example, a full-width punctuation character can be
-        // represented differently in console output and on disk).
+        /*
+            Always record the exact destination and yt-dlp's
+            common sidecar/partial names. If they are created,
+            cancellation can remove them without scanning the
+            whole download directory.
+        */
         RecordManifestFile(
             manifestPath,
             destination,
             files);
 
-        // These sidecars are deterministic once the exact destination
-        // is known, and are safe to track because they belong to that
-        // exact path.
         RecordManifestFile(
             manifestPath,
             destination + L".part",
@@ -501,120 +498,49 @@ namespace
             manifestPath,
             destination + L".temp",
             files);
-    }
 
-    bool IsCleanupExtension(
-        const std::wstring& name)
-    {
-        const size_t dot = name.find_last_of(L'.');
-
-        if (dot == std::wstring::npos)
-        {
-            return false;
-        }
-
-        const std::wstring extension =
-            name.substr(dot);
-
-        return extension == L".part" ||
-               extension == L".ytdl" ||
-               extension == L".temp" ||
-               extension == L".webp" ||
-               extension == L".webm" ||
-               extension == L".mp3" ||
-               extension == L".mp4" ||
-               extension == L".m4a" ||
-               extension == L".m4v";
-    }
-
-    std::wstring NormalizeFileNameForMatch(
-        const std::wstring& value)
-    {
-        std::wstring normalized;
-        normalized.reserve(value.size());
-
-        bool previousWasSpace = false;
-
-        for (wchar_t ch : value)
-        {
-            const bool isAlphaNumeric =
-                (ch >= L'a' && ch <= L'z') ||
-                (ch >= L'A' && ch <= L'Z') ||
-                (ch >= L'0' && ch <= L'9');
-
-            if (isAlphaNumeric)
-            {
-                normalized.push_back(
-                    static_cast<wchar_t>(towlower(ch)));
-                previousWasSpace = false;
-                continue;
-            }
-
-            if (!previousWasSpace)
-            {
-                normalized.push_back(L' ');
-                previousWasSpace = true;
-            }
-        }
-
-        while (!normalized.empty() &&
-               normalized.back() == L' ')
-        {
-            normalized.pop_back();
-        }
-
-        return normalized;
-    }
-
-    std::wstring GetFileStem(
-        const std::wstring& name)
-    {
         const size_t slash =
-            name.find_last_of(L"\\/");
-
-        const size_t start =
-            (slash == std::wstring::npos)
-                ? 0
-                : slash + 1;
+            destination.find_last_of(L"\\/");
 
         const size_t dot =
-            name.find_last_of(L'.');
+            destination.find_last_of(L'.');
 
-        const size_t end =
-            (dot == std::wstring::npos || dot < start)
-                ? name.size()
-                : dot;
-
-        return name.substr(
-            start,
-            end - start);
-    }
-
-    bool HasTrackedStem(
-        const std::wstring& name,
-        const std::vector<std::wstring>& trackedDestinations)
-    {
-        const std::wstring normalizedName =
-            NormalizeFileNameForMatch(
-                GetFileStem(name));
-
-        if (normalizedName.empty())
+        if (dot == std::wstring::npos ||
+            (slash != std::wstring::npos && dot < slash))
         {
-            return false;
+            return;
         }
 
-        for (const std::wstring& destination :
-             trackedDestinations)
+        const std::wstring stem =
+            destination.substr(0, dot);
+
+        /*
+            These are the common media/thumbnail files produced
+            around MP3/MP4 downloads. They are added to the manifest
+            only when they did not already exist when they were
+            discovered. That protects an unrelated existing file
+            with the same name.
+        */
+        const std::wstring candidates[] =
         {
-            if (NormalizeFileNameForMatch(
-                    GetFileStem(destination)) ==
-                normalizedName)
+            stem + L".webm",
+            stem + L".webp",
+            stem + L".m4a",
+            stem + L".m4v",
+            stem + L".mp3",
+            stem + L".mp4"
+        };
+
+        for (const std::wstring& candidate : candidates)
+        {
+            if (!FileExists(candidate))
             {
-                return true;
+                RecordManifestFile(
+                    manifestPath,
+                    candidate,
+                    files);
             }
         }
-
-        return false;
     }
 
     void DeleteManifestFiles(
@@ -627,50 +553,30 @@ namespace
                 continue;
             }
 
-            SetLastError(ERROR_SUCCESS);
-
             const BOOL deleted =
                 DeleteFileW(path.c_str());
 
-            if (deleted)
-            {
-                DownloadLogger::Write(
-                    L"DownloadWorker",
-                    L"Deleted manifest file: " + path);
-                continue;
-            }
-
-            const DWORD errorCode = GetLastError();
-
-            if (errorCode == ERROR_FILE_NOT_FOUND ||
-                errorCode == ERROR_PATH_NOT_FOUND)
-            {
-                DownloadLogger::Write(
-                    L"DownloadWorker",
-                    L"Manifest file already absent: " + path);
-            }
-            else
-            {
-                DownloadLogger::Write(
-                    L"DownloadWorker",
-                    L"Failed to delete manifest file (error " +
-                    std::to_wstring(errorCode) +
-                    L"): " +
-                    path);
-            }
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                (deleted
+                    ? L"Deleted manifest file: "
+                    : L"Failed to delete manifest file (error " +
+                      std::to_wstring(GetLastError()) +
+                      L"): ") +
+                path);
         }
     }
 
-    // Safety net independent of the manifest. A cancellation can
-    // happen before yt-dlp's output reaches our parser, or yt-dlp can
-    // sanitize a title differently between stages. Scan only files
-    // written since this session started. Partial/thumbnail artifacts
-    // are always eligible; completed media files are eligible only when
-    // their normalized title matches a destination reported by yt-dlp.
+    // Safety net independent of the manifest: scans the folder directly
+    // for partial-download artifacts (.part/.ytdl/.temp) created since
+    // the download started. This exists because the manifest is only
+    // populated as yt-dlp's console output gets parsed - a very fast
+    // cancel can terminate the process before any "Destination:" line
+    // is ever read, leaving the manifest empty even though yt-dlp
+    // already wrote a partial file to disk.
     void ScanAndDeleteRecentPartialArtifacts(
         const std::wstring& downloadsFolder,
-        const FILETIME& downloadStartTime,
-        const std::vector<std::wstring>& trackedDestinations)
+        const FILETIME& downloadStartTime)
     {
         const std::wstring searchPattern =
             downloadsFolder + L"\\*";
@@ -706,7 +612,12 @@ namespace
 
             const std::wstring name = findData.cFileName;
 
-            if (!IsCleanupExtension(name))
+            const bool isPartialArtifact =
+                (name.find(L".part") != std::wstring::npos) ||
+                (name.find(L".ytdl") != std::wstring::npos) ||
+                (name.find(L".temp") != std::wstring::npos);
+
+            if (!isPartialArtifact)
             {
                 continue;
             }
@@ -716,32 +627,15 @@ namespace
             fileTimeValue.HighPart = findData.ftLastWriteTime.dwHighDateTime;
 
             // 2 seconds = 20,000,000 in 100-nanosecond FILETIME units.
-            if (fileTimeValue.QuadPart + 20000000ULL <
-                startTimeValue.QuadPart)
+            // Allows a small tolerance since the file's creation time
+            // can be marginally before our recorded start time.
+            if (fileTimeValue.QuadPart + 20000000ULL < startTimeValue.QuadPart)
             {
                 continue; // predates this download - leave it alone
             }
 
-            const bool isAlwaysSafeArtifact =
-                name.size() >= 5 &&
-                (name.rfind(L".part") == name.size() - 5 ||
-                 name.rfind(L".ytdl") == name.size() - 5 ||
-                 name.rfind(L".temp") == name.size() - 5 ||
-                 name.rfind(L".webp") == name.size() - 5);
-
-            if (!isAlwaysSafeArtifact &&
-                !HasTrackedStem(name, trackedDestinations))
-            {
-                continue;
-            }
-
-            const std::wstring fullPath =
-                downloadsFolder + L"\\" + name;
-
-            SetLastError(ERROR_SUCCESS);
-
-            const BOOL deleted =
-                DeleteFileW(fullPath.c_str());
+            const std::wstring fullPath = downloadsFolder + L"\\" + name;
+            const BOOL deleted = DeleteFileW(fullPath.c_str());
 
             DownloadLogger::Write(
                 L"DownloadWorker",
@@ -770,7 +664,6 @@ namespace
     void CleanupCancelledSession(
         const std::wstring& manifestPath,
         const std::vector<std::wstring>& trackedFiles,
-        const std::vector<std::wstring>& trackedDestinations,
         const std::wstring& downloadsFolder,
         const FILETIME& downloadStartTime)
     {
@@ -839,8 +732,7 @@ namespace
         */
         ScanAndDeleteRecentPartialArtifacts(
             downloadsFolder,
-            downloadStartTime,
-            trackedDestinations);
+            downloadStartTime);
 
         DownloadLogger::Write(
             L"DownloadWorker",
@@ -1018,30 +910,9 @@ namespace
         std::wstring commandLine =
             L"\"" + ytDlpPath + L"\" "
             L"--newline "
+            L"--continue "
             L"--print before_dl:__ITD_FILE__:%(filepath)s "
             L"--no-quiet ";
-
-        if (isMp3)
-        {
-            // A single audio stream - --continue resumes this
-            // reliably, since there's no merge step involved.
-            commandLine += L"--continue ";
-        }
-        else
-        {
-            // Video uses "-f bv*+ba/b", which downloads separate
-            // video/audio streams and merges them with ffmpeg.
-            // --continue does not reliably resume this: if a pause
-            // lands near the merge step, yt-dlp can treat a component
-            // file as "already complete" when it isn't fully usable,
-            // and ffprobe then fails to read its audio codec during
-            // postprocessing (resulting in a broken/incomplete file
-            // left as .webm instead of the final .mp4). Doing a full,
-            // clean restart avoids that failure mode entirely.
-            commandLine +=
-                L"--no-continue "
-                L"--force-overwrites ";
-        }
 
         if (isPlaylist)
         {
@@ -1065,23 +936,7 @@ namespace
         }
         else
         {
-            /*
-                Prefer MP4-compatible streams so the normal result is
-                an MP4 file. The previous "bv*+ba/b" allowed yt-dlp to
-                fall back to a WebM-only progressive format. In that
-                case there was nothing to merge, so the final file kept
-                the .webm extension.
-
-                Prefer:
-                  video: MP4
-                  audio: M4A
-                and fall back to a progressive MP4. When separate
-                streams are selected, explicitly request MP4 as the
-                merge container.
-            */
-            commandLine +=
-                L"-f \"bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]\" "
-                L"--merge-output-format mp4 ";
+            commandLine += L"-f \"bv*+ba/b\" ";
         }
 
         commandLine +=
@@ -1482,7 +1337,6 @@ namespace DownloadWorker
             CleanupCancelledSession(
                 manifestPath,
                 manifestFiles,
-                trackedDestinations,
                 downloadsFolder,
                 downloadStartTime);
 
