@@ -5,550 +5,543 @@
 #include "DownloadLogger.h"
 
 #include <commctrl.h>
+#include <uxtheme.h>
+#include <algorithm>
+#include <memory>
 
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "uxtheme.lib")
 
 namespace
 {
     const wchar_t CLASS_NAME[] = L"ITDownloaderV2Window";
+
+    constexpr COLORREF CLR_BG        = RGB(248, 248, 248);
+    constexpr COLORREF CLR_SURFACE   = RGB(255, 255, 255);
+    constexpr COLORREF CLR_TEXT      = RGB(24, 24, 24);
+    constexpr COLORREF CLR_MUTED     = RGB(105, 105, 105);
+    constexpr COLORREF CLR_BORDER    = RGB(220, 220, 220);
+    constexpr COLORREF CLR_RED       = RGB(220, 38, 38);
+    constexpr COLORREF CLR_RED_DARK  = RGB(185, 28, 28);
+    constexpr COLORREF CLR_DISABLED  = RGB(180, 180, 180);
+
+    HFONT MakeFont(int height, int weight)
+    {
+        return CreateFontW(
+            height, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    }
+
+    void DeleteFont(HFONT& font)
+    {
+        if (font) { DeleteObject(font); font = nullptr; }
+    }
 }
 
-bool MainWindow::Create(
-    HINSTANCE hInstance,
-    int nCmdShow,
-    const std::wstring& initialUrl)
+bool MainWindow::Create(HINSTANCE hInstance, int nCmdShow, const std::wstring& initialUrl)
 {
-    DownloadLogger::Write(
-        L"MainWindow",
-        L"Create() called.");
-
     m_hInstance = hInstance;
 
-    INITCOMMONCONTROLSEX commonControls{};
-    commonControls.dwSize = sizeof(commonControls);
-    commonControls.dwICC = ICC_PROGRESS_CLASS;
-
-    InitCommonControlsEx(&commonControls);
+    INITCOMMONCONTROLSEX cc = { sizeof(cc), ICC_PROGRESS_CLASS };
+    InitCommonControlsEx(&cc);
 
     WNDCLASSW wc{};
     wc.lpfnWndProc = MainWindow::WindowProcStatic;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.hbrBackground = nullptr;
 
-    RegisterClassW(&wc);
+    static bool registered = false;
+    if (!registered) { RegisterClassW(&wc); registered = true; }
 
     m_hwnd = CreateWindowExW(
-        0,
-        CLASS_NAME,
-        L"IT Downloader V2",
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        700,
-        340,
-        nullptr,
-        nullptr,
-        hInstance,
-        this);
+        0, CLASS_NAME, L"IT Downloader V2",
+        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        CW_USEDEFAULT, CW_USEDEFAULT, 720, 480,
+        nullptr, nullptr, hInstance, this);
 
-    if (m_hwnd == nullptr)
+    if (!m_hwnd)
     {
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"CreateWindowExW() FAILED.");
-
-        MessageBoxW(
-            nullptr,
-            L"Failed to create the main window.",
-            L"IT Downloader V2",
-            MB_OK | MB_ICONERROR);
-
+        MessageBoxW(nullptr, L"Failed to create the main window.",
+                    L"IT Downloader V2", MB_OK | MB_ICONERROR);
         return false;
     }
 
     if (!initialUrl.empty())
-    {
-        SetWindowTextW(
-            m_urlEdit,
-            initialUrl.c_str());
+        SetWindowTextW(m_urlEdit, initialUrl.c_str());
 
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"Initial URL supplied.");
-    }
+    // Center window
+    RECT rc; GetWindowRect(m_hwnd, &rc);
+    int w = rc.right - rc.left, h = rc.bottom - rc.top;
+    int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+    SetWindowPos(m_hwnd, nullptr, (sw - w) / 2, (sh - h) / 2, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
 
     ShowWindow(m_hwnd, nCmdShow);
     UpdateWindow(m_hwnd);
-
-    DownloadLogger::Write(
-        L"MainWindow",
-        L"Main window created and shown.");
-
     return true;
 }
 
-LRESULT CALLBACK MainWindow::WindowProcStatic(
-    HWND hwnd,
-    UINT uMsg,
-    WPARAM wParam,
-    LPARAM lParam)
+LRESULT CALLBACK MainWindow::WindowProcStatic(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     MainWindow* self = nullptr;
-
     if (uMsg == WM_NCCREATE)
     {
-        CREATESTRUCTW* cs =
-            reinterpret_cast<CREATESTRUCTW*>(lParam);
-
-        self =
-            reinterpret_cast<MainWindow*>(cs->lpCreateParams);
-
-        SetWindowLongPtrW(
-            hwnd,
-            GWLP_USERDATA,
-            reinterpret_cast<LONG_PTR>(self));
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        self = reinterpret_cast<MainWindow*>(cs->lpCreateParams);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
     }
     else
     {
-        self =
-            reinterpret_cast<MainWindow*>(
-                GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        self = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     }
-
-    if (self != nullptr)
-    {
-        return self->HandleMessage(
-            hwnd,
-            uMsg,
-            wParam,
-            lParam);
-    }
-
-    return DefWindowProcW(
-        hwnd,
-        uMsg,
-        wParam,
-        lParam);
+    return self ? self->HandleMessage(hwnd, uMsg, wParam, lParam)
+                : DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
 
-LRESULT MainWindow::HandleMessage(
-    HWND hwnd,
-    UINT uMsg,
-    WPARAM wParam,
-    LPARAM lParam)
+LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg)
     {
     case WM_CREATE:
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"WM_CREATE received.");
-
         CreateControls(hwnd);
         return 0;
+
+    case WM_ERASEBKGND:
+        return 1; // we paint the background ourselves
+
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+
+        // Double-buffer to avoid flicker
+        RECT rc; GetClientRect(hwnd, &rc);
+        HDC memDC = CreateCompatibleDC(hdc);
+        HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
+        HGDIOBJ oldBmp = SelectObject(memDC, bmp);
+        PaintBackground(memDC, rc);
+        BitBlt(hdc, 0, 0, rc.right, rc.bottom, memDC, 0, 0, SRCCOPY);
+        SelectObject(memDC, oldBmp);
+        DeleteObject(bmp);
+        DeleteDC(memDC);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, CLR_TEXT);
+        return reinterpret_cast<LRESULT>(GetStockObject(NULL_BRUSH));
+    }
+
+    case WM_CTLCOLOREDIT:
+    {
+        HDC hdc = reinterpret_cast<HDC>(wParam);
+        SetBkColor(hdc, CLR_SURFACE);
+        SetTextColor(hdc, CLR_TEXT);
+        static HBRUSH brush = CreateSolidBrush(CLR_SURFACE);
+        return reinterpret_cast<LRESULT>(brush);
+    }
 
     case WM_COMMAND:
         if (HIWORD(wParam) == BN_CLICKED)
         {
             switch (LOWORD(wParam))
             {
-            case IDC_DOWNLOAD_BTN:
-                DownloadLogger::Write(
-                    L"MainWindow",
-                    L"Download button clicked.");
-
-                OnDownloadClicked(hwnd);
-                return 0;
-
-            case IDC_CANCEL_BTN:
-                DownloadLogger::Write(
-                    L"MainWindow",
-                    L"Cancel button clicked.");
-
-                OnCancelClicked();
-                return 0;
-
-            case IDC_PAUSE_BTN:
-                DownloadLogger::Write(
-                    L"MainWindow",
-                    L"Pause/Resume button clicked.");
-
-                OnPauseResumeClicked(hwnd);
-                return 0;
+            case IDC_DOWNLOAD_BTN: OnDownloadClicked(hwnd); return 0;
+            case IDC_CANCEL_BTN:   OnCancelClicked(); return 0;
+            case IDC_PAUSE_BTN:    OnPauseResumeClicked(hwnd); return 0;
+            case IDC_RADIO_MP4:    SetFormatSelection(false); return 0;
+            case IDC_RADIO_MP3:    SetFormatSelection(true); return 0;
             }
         }
         break;
 
-    case WM_APP_DOWNLOAD_PROGRESS:
-        if (m_progressBar != nullptr)
-        {
-            SendMessageW(
-                m_progressBar,
-                PBM_SETPOS,
-                wParam,
-                0);
-        }
+    case WM_DRAWITEM:
+        DrawOwnerButton(reinterpret_cast<const DRAWITEMSTRUCT*>(lParam));
+        return TRUE;
 
+    case WM_APP_DOWNLOAD_PROGRESS:
+        if (m_progressBar)
+            SendMessageW(m_progressBar, PBM_SETPOS, wParam, 0);
+        UpdateProgressText(static_cast<int>(wParam));
         return 0;
 
     case WM_APP_DOWNLOAD_STATUS:
     {
-        auto* status =
-            reinterpret_cast<std::wstring*>(lParam);
-
-        if (status != nullptr)
+        auto* status = reinterpret_cast<std::wstring*>(lParam);
+        if (status)
         {
             m_lastStatusText = *status;
-
-            if (m_statusLabel != nullptr)
-            {
-                SetWindowTextW(
-                    m_statusLabel,
-                    status->c_str());
-            }
-
+            if (m_statusLabel) SetWindowTextW(m_statusLabel, status->c_str());
             delete status;
         }
-
         return 0;
     }
 
     case WM_APP_DOWNLOAD_FINISHED:
     {
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"WM_APP_DOWNLOAD_FINISHED received.");
+        auto* info = reinterpret_cast<DownloadFinishedInfo*>(lParam);
+        if (!info) return 0;
 
-        auto* info =
-            reinterpret_cast<DownloadFinishedInfo*>(lParam);
+        const DWORD exitCode = info->exitCode;
+        const std::wstring folder = info->downloadsFolder;
+        const std::wstring filePath = info->filePath;
+        const bool wasPaused = info->wasPaused;
+        const bool wasCancelled = info->wasCancelled;
 
-        if (info != nullptr)
+        if (wasPaused)
         {
-            const DWORD exitCode = info->exitCode;
-            const std::wstring folder = info->downloadsFolder;
-            const std::wstring filePath = info->filePath;
-            const bool wasPaused = info->wasPaused;
-            const bool wasCancelled = info->wasCancelled;
-
-            DownloadLogger::Write(
-                L"MainWindow",
-                L"Finished info: exitCode=" +
-                std::to_wstring(exitCode));
-
-            DownloadLogger::Write(
-                L"MainWindow",
-                wasPaused
-                    ? L"Finished state: PAUSED."
-                    : wasCancelled
-                        ? L"Finished state: CANCELLED."
-                        : L"Finished state: COMPLETE/FAILED.");
-
-            if (wasPaused)
+            m_isPaused = true;
+            m_cancelPending = false;
+            EnableWindow(m_pauseButton, TRUE);
+            SetWindowTextW(m_pauseButton, L"Resume");
+            SetWindowTextW(m_statusLabel, L"Paused");
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+        else if (wasCancelled)
+        {
+            SetDownloadingState(false);
+            m_cancelPending = false;
+            SetWindowTextW(m_statusLabel, L"Download cancelled.");
+        }
+        else
+        {
+            SetDownloadingState(false);
+            m_cancelPending = false;
+            if (exitCode == 0)
             {
-                m_isPaused = true;
-                EnableWindow(m_pauseButton, TRUE);
-                SetWindowTextW(m_pauseButton, L"Resume");
-
-                if (m_statusLabel != nullptr)
-                {
-                    SetWindowTextW(m_statusLabel, L"Paused.");
-                }
-            }
-            else if (wasCancelled)
-            {
-                DownloadLogger::Write(
-                    L"MainWindow",
-                    L"Processing cancellation result.");
-
-                SetDownloadingState(false);
-
-                if (m_statusLabel != nullptr)
-                {
-                    SetWindowTextW(
-                        m_statusLabel,
-                        L"Download cancelled.");
-                }
+                SetWindowTextW(m_statusLabel, L"Download complete.");
+                SendMessageW(m_progressBar, PBM_SETPOS, 100, 0);
+                UpdateProgressText(100);
+                CompletionWindow::Create(m_hInstance, m_hwnd,
+                                         filePath.empty() ? folder : filePath);
             }
             else
             {
-                SetDownloadingState(false);
-
-                if (exitCode == 0)
+                SetWindowTextW(m_statusLabel, L"Download failed.");
+                if (exitCode != PRE_LAUNCH_FAILURE_CODE)
                 {
-                    if (m_statusLabel != nullptr)
-                    {
-                        SetWindowTextW(
-                            m_statusLabel,
-                            L"Download complete.");
-                    }
-
-                    DownloadLogger::Write(
-                        L"MainWindow",
-                        L"Creating completion window.");
-
-                    CompletionWindow::Create(
-                        m_hInstance,
-                        m_hwnd,
-                        filePath.empty() ? folder : filePath);
-                }
-                else
-                {
-                    if (m_statusLabel != nullptr)
-                    {
-                        SetWindowTextW(
-                            m_statusLabel,
-                            L"Download failed.");
-                    }
-
-                    if (exitCode != PRE_LAUNCH_FAILURE_CODE)
-                    {
-                        std::wstring message =
-                            L"yt-dlp exited with error code " +
-                            std::to_wstring(exitCode) +
-                            L".";
-
-                        if (!m_lastStatusText.empty())
-                        {
-                            message += L"\n\n" + m_lastStatusText;
-                        }
-
-                        MessageBoxW(
-                            hwnd,
-                            message.c_str(),
-                            L"IT Downloader V2",
-                            MB_OK | MB_ICONERROR);
-                    }
+                    MessageBoxW(hwnd,
+                        L"The download could not be completed. Please check the URL and try again.",
+                        L"IT Downloader V2", MB_OK | MB_ICONERROR);
                 }
             }
-
-            delete info;
         }
-
+        delete info;
         return 0;
     }
 
     case WM_DESTROY:
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"WM_DESTROY received. Requesting download cancellation.");
-
         DownloadManager::CancelDownload();
-
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"Posting WM_QUIT.");
-
+        DeleteFont(m_titleFont);
+        DeleteFont(m_sectionFont);
+        DeleteFont(m_bodyFont);
+        DeleteFont(m_smallFont);
+        DeleteFont(m_buttonFont);
         PostQuitMessage(0);
         return 0;
     }
 
-    return DefWindowProcW(
-        hwnd,
-        uMsg,
-        wParam,
-        lParam);
+    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
 }
 
 void MainWindow::CreateControls(HWND hwnd)
 {
-    DownloadLogger::Write(
-        L"MainWindow",
-        L"Creating controls.");
+    // Fonts – reduced sizes for a cleaner look
+    m_titleFont   = MakeFont(22, FW_SEMIBOLD);
+    m_sectionFont = MakeFont(13, FW_SEMIBOLD);
+    m_bodyFont    = MakeFont(13, FW_NORMAL);
+    m_smallFont   = MakeFont(12, FW_NORMAL);
+    m_buttonFont  = MakeFont(12, FW_SEMIBOLD);
 
-    CreateWindowW(
-        L"STATIC",
-        L"Video URL:",
-        WS_VISIBLE | WS_CHILD,
-        30, 30, 100, 25,
-        hwnd,
-        nullptr,
-        nullptr,
-        nullptr);
+    auto makeStatic = [&](const wchar_t* text, int x, int y, int w, int h, HFONT font) -> HWND
+    {
+        HWND ctrl = CreateWindowW(L"STATIC", text, WS_VISIBLE | WS_CHILD,
+                                  x, y, w, h, hwnd, nullptr, nullptr, nullptr);
+        SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        return ctrl;
+    };
+
+    // Title
+    makeStatic(L"IT Downloader V2", 36, 24, 400, 30, m_titleFont);
+
+    // Subtitle
+    makeStatic(L"Download videos and audio with a simple, focused workflow.",
+               38, 58, 600, 20, m_smallFont);
+
+    // URL label
+    makeStatic(L"Video or playlist URL", 36, 96, 200, 20, m_sectionFont);
 
     m_urlEdit = CreateWindowExW(
-        WS_EX_CLIENTEDGE,
-        L"EDIT",
-        L"",
+        WS_EX_CLIENTEDGE, L"EDIT", L"",
         WS_VISIBLE | WS_CHILD | ES_AUTOHSCROLL,
-        30, 60, 620, 30,
-        hwnd,
-        (HMENU)IDC_URL,
-        nullptr,
-        nullptr);
+        36, 120, 648, 34,
+        hwnd, (HMENU)(INT_PTR)IDC_URL, nullptr, nullptr);
+    SendMessageW(m_urlEdit, WM_SETFONT, reinterpret_cast<WPARAM>(m_bodyFont), TRUE);
+    SendMessageW(m_urlEdit, EM_SETCUEBANNER, TRUE,
+                 reinterpret_cast<LPARAM>(L"Paste video or playlist URL..."));
 
-    CreateWindowW(
-        L"STATIC",
-        L"Format:",
-        WS_VISIBLE | WS_CHILD,
-        30, 110, 100, 25,
-        hwnd,
-        nullptr,
-        nullptr,
-        nullptr);
+    // Format label
+    makeStatic(L"Format", 36, 174, 200, 20, m_sectionFont);
 
-    CreateWindowW(
-        L"BUTTON",
-        L"MP4 Video",
-        WS_VISIBLE | WS_CHILD |
-            WS_GROUP | BS_AUTORADIOBUTTON,
-        30, 140, 120, 25,
-        hwnd,
-        (HMENU)IDC_RADIO_MP4,
-        nullptr,
-        nullptr);
+    // MP4 and MP3 cards – custom drawn
+    m_mp4Button = CreateWindowW(
+        L"BUTTON", L"MP4 Video\nVideo",
+        WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+        36, 200, 314, 56,
+        hwnd, (HMENU)(INT_PTR)IDC_RADIO_MP4, nullptr, nullptr);
 
-    CreateWindowW(
-        L"BUTTON",
-        L"MP3 Audio",
-        WS_VISIBLE | WS_CHILD |
-            BS_AUTORADIOBUTTON,
-        160, 140, 120, 25,
-        hwnd,
-        (HMENU)IDC_RADIO_MP3,
-        nullptr,
-        nullptr);
+    m_mp3Button = CreateWindowW(
+        L"BUTTON", L"MP3 Audio\nAudio",
+        WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+        370, 200, 314, 56,
+        hwnd, (HMENU)(INT_PTR)IDC_RADIO_MP3, nullptr, nullptr);
 
-    SendMessageW(
-        GetDlgItem(hwnd, IDC_RADIO_MP4),
-        BM_SETCHECK,
-        BST_CHECKED,
-        0);
-
+    // Action buttons
     m_downloadButton = CreateWindowW(
-        L"BUTTON",
-        L"Download",
-        WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-        30, 190, 120, 35,
-        hwnd,
-        (HMENU)IDC_DOWNLOAD_BTN,
-        nullptr,
-        nullptr);
-
-    m_cancelButton = CreateWindowW(
-        L"BUTTON",
-        L"Cancel",
-        WS_CHILD | BS_PUSHBUTTON,
-        160, 190, 100, 35,
-        hwnd,
-        (HMENU)IDC_CANCEL_BTN,
-        nullptr,
-        nullptr);
+        L"BUTTON", L"Download",
+        WS_VISIBLE | WS_CHILD | BS_OWNERDRAW,
+        36, 280, 180, 42,
+        hwnd, (HMENU)(INT_PTR)IDC_DOWNLOAD_BTN, nullptr, nullptr);
 
     m_pauseButton = CreateWindowW(
-        L"BUTTON",
-        L"Pause",
-        WS_CHILD | BS_PUSHBUTTON,
-        270, 190, 100, 35,
-        hwnd,
-        (HMENU)IDC_PAUSE_BTN,
-        nullptr,
-        nullptr);
+        L"BUTTON", L"Pause",
+        WS_CHILD | BS_OWNERDRAW,
+        232, 280, 120, 42,
+        hwnd, (HMENU)(INT_PTR)IDC_PAUSE_BTN, nullptr, nullptr);
 
+    m_cancelButton = CreateWindowW(
+        L"BUTTON", L"Cancel",
+        WS_CHILD | BS_OWNERDRAW,
+        364, 280, 120, 42,
+        hwnd, (HMENU)(INT_PTR)IDC_CANCEL_BTN, nullptr, nullptr);
+
+    // Progress
     m_progressBar = CreateWindowExW(
-        0,
-        PROGRESS_CLASSW,
-        nullptr,
-        WS_VISIBLE | WS_CHILD,
-        30, 250, 620, 25,
-        hwnd,
-        (HMENU)IDC_PROGRESS,
-        nullptr,
-        nullptr);
+        0, PROGRESS_CLASSW, nullptr,
+        WS_VISIBLE | WS_CHILD | PBS_SMOOTH,
+        36, 340, 648, 12,
+        hwnd, (HMENU)(INT_PTR)IDC_PROGRESS, nullptr, nullptr);
 
-    SendMessageW(
-        m_progressBar,
-        PBM_SETRANGE,
-        0,
-        MAKELPARAM(0, 100));
+    SendMessageW(m_progressBar, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+    SendMessageW(m_progressBar, PBM_SETPOS, 0, 0);
+    SendMessageW(m_progressBar, PBM_SETBARCOLOR, 0, CLR_RED);
 
-    SendMessageW(
-        m_progressBar,
-        PBM_SETPOS,
-        0,
-        0);
+    // Status row
+    m_statusCaption = makeStatic(L"Status", 36, 364, 60, 20, m_smallFont);
+    m_statusLabel   = makeStatic(L"Ready", 96, 364, 400, 20, m_bodyFont);
+    m_progressPercent = makeStatic(L"0%", 620, 364, 64, 20, m_smallFont);
 
-    m_statusLabel = CreateWindowW(
-        L"STATIC",
-        L"Ready.",
-        WS_VISIBLE | WS_CHILD,
-        30, 290, 620, 25,
-        hwnd,
-        (HMENU)IDC_STATUS,
-        nullptr,
-        nullptr);
+    SetFormatSelection(false);
+    SetDownloadingState(false);
+    ApplyControlFonts();
+}
 
-    DownloadLogger::Write(
-        L"MainWindow",
-        L"Controls created.");
+void MainWindow::ApplyControlFonts()
+{
+    auto setFont = [this](HWND ctrl) {
+        if (ctrl) SendMessageW(ctrl, WM_SETFONT, reinterpret_cast<WPARAM>(m_buttonFont), TRUE);
+    };
+    setFont(m_downloadButton);
+    setFont(m_pauseButton);
+    setFont(m_cancelButton);
+    setFont(m_mp4Button);
+    setFont(m_mp3Button);
+}
+
+void MainWindow::PaintBackground(HDC hdc, const RECT& clientRect)
+{
+    // Background
+    HBRUSH bgBrush = CreateSolidBrush(CLR_BG);
+    FillRect(hdc, &clientRect, bgBrush);
+    DeleteObject(bgBrush);
+
+    // Draw four rounded cards
+    const int left = 20, right = clientRect.right - 20;
+    const RECT cards[4] = {
+        { left, 86, right, 166 },
+        { left, 178, right, 268 },
+        { left, 270, right, 334 },
+        { left, 330, right, 392 }
+    };
+
+    HBRUSH surfBrush = CreateSolidBrush(CLR_SURFACE);
+    HPEN   borderPen = CreatePen(PS_SOLID, 1, CLR_BORDER);
+    HGDIOBJ oldBrush = SelectObject(hdc, surfBrush);
+    HGDIOBJ oldPen   = SelectObject(hdc, borderPen);
+
+    for (const auto& rc : cards)
+        RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 8, 8);
+
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(borderPen);
+    DeleteObject(surfBrush);
+}
+
+void MainWindow::DrawFormatCard(HDC hdc, const RECT& rect, const wchar_t* title,
+                                const wchar_t* subtitle, bool selected)
+{
+    COLORREF fill = selected ? RGB(255, 240, 240) : CLR_SURFACE;
+    COLORREF line = selected ? CLR_RED : CLR_BORDER;
+    COLORREF titleColor = selected ? CLR_RED_DARK : CLR_TEXT;
+
+    HBRUSH brush = CreateSolidBrush(fill);
+    HPEN pen = CreatePen(PS_SOLID, selected ? 2 : 1, line);
+    HGDIOBJ oldBrush = SelectObject(hdc, brush);
+    HGDIOBJ oldPen = SelectObject(hdc, pen);
+    RoundRect(hdc, rect.left + 1, rect.top + 1, rect.right - 1, rect.bottom - 1, 7, 7);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, titleColor);
+    SelectObject(hdc, m_buttonFont);
+    RECT titleRect{ rect.left + 16, rect.top + 10, rect.right - 16, rect.top + 32 };
+    DrawTextW(hdc, title, -1, &titleRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+    SetTextColor(hdc, CLR_MUTED);
+    SelectObject(hdc, m_smallFont);
+    RECT subRect{ rect.left + 16, rect.top + 32, rect.right - 16, rect.bottom - 8 };
+    DrawTextW(hdc, subtitle, -1, &subRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+    if (selected)
+    {
+        HBRUSH dot = CreateSolidBrush(CLR_RED);
+        HGDIOBJ old = SelectObject(hdc, dot);
+        Ellipse(hdc, rect.right - 28, rect.top + 20, rect.right - 16, rect.top + 32);
+        SelectObject(hdc, old);
+        DeleteObject(dot);
+    }
+}
+
+void MainWindow::DrawOwnerButton(const DRAWITEMSTRUCT* dis)
+{
+    if (!dis) return;
+
+    HDC hdc = dis->hDC;
+    RECT rc = dis->rcItem;
+    const bool disabled = (dis->itemState & ODS_DISABLED) != 0;
+    const bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+
+    // Format selection cards
+    if (dis->CtlID == IDC_RADIO_MP4 || dis->CtlID == IDC_RADIO_MP3)
+    {
+        const bool selected = (dis->CtlID == IDC_RADIO_MP3) == m_selectedMp3;
+        DrawFormatCard(
+            hdc, rc,
+            dis->CtlID == IDC_RADIO_MP3 ? L"MP3 Audio" : L"MP4 Video",
+            dis->CtlID == IDC_RADIO_MP3 ? L"Audio only • MP3" : L"Video • MP4",
+            selected && !disabled);
+        return;
+    }
+
+    COLORREF fill = CLR_SURFACE, text = CLR_TEXT, border = CLR_BORDER;
+
+    if (dis->CtlID == IDC_DOWNLOAD_BTN)
+    {
+        fill = disabled ? RGB(220, 220, 220) : (pressed ? CLR_RED_DARK : CLR_RED);
+        text = RGB(255, 255, 255);
+        border = fill;
+    }
+    else if (disabled)
+    {
+        fill = RGB(235, 235, 235);
+        text = CLR_DISABLED;
+        border = RGB(200, 200, 200);
+    }
+    else if (pressed)
+    {
+        fill = RGB(242, 242, 242);
+        border = RGB(190, 190, 190);
+    }
+
+    HBRUSH brush = CreateSolidBrush(fill);
+    HPEN   pen   = CreatePen(PS_SOLID, 1, border);
+    HGDIOBJ oldBrush = SelectObject(hdc, brush);
+    HGDIOBJ oldPen   = SelectObject(hdc, pen);
+    RoundRect(hdc, rc.left + 1, rc.top + 1, rc.right - 1, rc.bottom - 1, 6, 6);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(pen);
+    DeleteObject(brush);
+
+    wchar_t label[128];
+    GetWindowTextW(dis->hwndItem, label, 128);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, text);
+    SelectObject(hdc, m_buttonFont);
+    DrawTextW(hdc, label, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    if (dis->itemState & ODS_FOCUS)
+    {
+        RECT focus = rc;
+        InflateRect(&focus, -4, -4);
+        DrawFocusRect(hdc, &focus);
+    }
+}
+
+void MainWindow::SetFormatSelection(bool mp3)
+{
+    m_selectedMp3 = mp3;
+    if (m_mp4Button) InvalidateRect(m_mp4Button, nullptr, FALSE);
+    if (m_mp3Button) InvalidateRect(m_mp3Button, nullptr, FALSE);
+}
+
+void MainWindow::UpdateProgressText(int progress)
+{
+    progress = (std::max)(0, (std::min)(100, progress));
+    if (m_progressPercent)
+        SetWindowTextW(m_progressPercent, (std::to_wstring(progress) + L"%").c_str());
 }
 
 void MainWindow::SetDownloadingState(bool downloading)
 {
-    DownloadLogger::Write(
-        L"MainWindow",
-        downloading
-            ? L"SetDownloadingState(true)."
-            : L"SetDownloadingState(false).");
-
-    ShowWindow(m_downloadButton, downloading ? SW_HIDE : SW_SHOW);
-    ShowWindow(m_cancelButton, downloading ? SW_SHOW : SW_HIDE);
-    ShowWindow(m_pauseButton, downloading ? SW_SHOW : SW_HIDE);
+    m_isPaused = false;
+    EnableWindow(m_urlEdit, !downloading);
+    EnableWindow(m_mp4Button, !downloading);
+    EnableWindow(m_mp3Button, !downloading);
+    EnableWindow(m_downloadButton, !downloading);
 
     if (downloading)
     {
+        ShowWindow(m_pauseButton, SW_SHOW);
+        ShowWindow(m_cancelButton, SW_SHOW);
         SetWindowTextW(m_pauseButton, L"Pause");
         EnableWindow(m_pauseButton, TRUE);
         EnableWindow(m_cancelButton, TRUE);
+        m_cancelPending = false;
     }
-
-    m_isPaused = false;
-
-    if (m_urlEdit != nullptr)
+    else
     {
-        EnableWindow(
-            m_urlEdit,
-            downloading ? FALSE : TRUE);
+        ShowWindow(m_pauseButton, SW_HIDE);
+        ShowWindow(m_cancelButton, SW_HIDE);
+        m_cancelPending = false;
     }
-
-    EnableWindow(
-        GetDlgItem(m_hwnd, IDC_RADIO_MP4),
-        downloading ? FALSE : TRUE);
-
-    EnableWindow(
-        GetDlgItem(m_hwnd, IDC_RADIO_MP3),
-        downloading ? FALSE : TRUE);
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
-int MainWindow::ResolvePlaylistChoice(
-    HWND hwnd,
-    const std::wstring& url)
+int MainWindow::ResolvePlaylistChoice(HWND hwnd, const std::wstring& url)
 {
-    const bool hasList =
-        url.find(L"list=") != std::wstring::npos;
+    bool hasList = url.find(L"list=") != std::wstring::npos;
+    bool hasVideo = url.find(L"v=") != std::wstring::npos;
+    if (!hasList) return 0;
+    if (!hasVideo) return 1;
 
-    const bool hasVideo =
-        url.find(L"v=") != std::wstring::npos;
-
-    if (!hasList)
-    {
-        return 0;
-    }
-
-    if (!hasVideo)
-    {
-        return 1;
-    }
-
-    const int result = MessageBoxW(
-        hwnd,
-        L"This video is part of a playlist.\n\n"
-        L"Download the entire playlist, or just this video?\n\n"
-        L"Yes = Entire playlist\nNo = This video only",
-        L"IT Downloader V2",
-        MB_YESNOCANCEL | MB_ICONQUESTION);
-
+    int result = MessageBoxW(hwnd,
+        L"This URL contains a playlist.\n\n"
+        L"What would you like to download?\n\n"
+        L"Yes  — Entire playlist\n"
+        L"No   — This video only",
+        L"Playlist detected", MB_YESNOCANCEL | MB_ICONQUESTION);
     if (result == IDYES) return 1;
     if (result == IDNO) return 0;
     return -1;
@@ -556,143 +549,61 @@ int MainWindow::ResolvePlaylistChoice(
 
 void MainWindow::OnDownloadClicked(HWND hwnd)
 {
-    DownloadLogger::Write(
-        L"MainWindow",
-        L"OnDownloadClicked() called.");
+    wchar_t urlBuffer[4096];
+    GetWindowTextW(m_urlEdit, urlBuffer, 4096);
+    std::wstring url = urlBuffer;
 
-    wchar_t urlBuffer[2048]{};
-
-    GetWindowTextW(
-        m_urlEdit,
-        urlBuffer,
-        2048);
-
-    const std::wstring url = urlBuffer;
-
-    const int playlistChoice =
-        ResolvePlaylistChoice(hwnd, url);
-
-    if (playlistChoice == -1)
+    if (url.empty())
     {
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"Playlist selection cancelled by user.");
-
+        MessageBoxW(hwnd, L"Please enter a video or playlist URL.",
+                    L"IT Downloader V2", MB_OK | MB_ICONINFORMATION);
+        SetFocus(m_urlEdit);
         return;
     }
 
-    const bool isMp3 =
-        SendMessageW(
-            GetDlgItem(hwnd, IDC_RADIO_MP3),
-            BM_GETCHECK,
-            0,
-            0) == BST_CHECKED;
+    int choice = ResolvePlaylistChoice(hwnd, url);
+    if (choice == -1) return;
 
-    DownloadLogger::Write(
-        L"MainWindow",
-        isMp3
-            ? L"Selected format: MP3."
-            : L"Selected format: MP4.");
-
-    StartDownloadWithParams(
-        hwnd,
-        url,
-        isMp3,
-        playlistChoice == 1);
+    StartDownloadWithParams(hwnd, url, m_selectedMp3, choice == 1);
 }
 
-void MainWindow::StartDownloadWithParams(
-    HWND hwnd,
-    const std::wstring& url,
-    bool isMp3,
-    bool isPlaylist)
+void MainWindow::StartDownloadWithParams(HWND hwnd, const std::wstring& url,
+                                         bool isMp3, bool isPlaylist)
 {
-    DownloadLogger::Write(
-        L"MainWindow",
-        L"StartDownloadWithParams() called.");
-
-    if (DownloadManager::StartDownload(
-        hwnd,
-        url,
-        isMp3,
-        isPlaylist))
+    if (DownloadManager::StartDownload(hwnd, url, isMp3, isPlaylist))
     {
         m_lastUrl = url;
         m_lastIsMp3 = isMp3;
         m_lastIsPlaylist = isPlaylist;
 
-        SendMessageW(
-            m_progressBar,
-            PBM_SETPOS,
-            0,
-            0);
-
-        SetWindowTextW(
-            m_statusLabel,
-            L"Starting download...");
-
+        SendMessageW(m_progressBar, PBM_SETPOS, 0, 0);
+        UpdateProgressText(0);
+        SetWindowTextW(m_statusLabel, L"Starting download...");
         SetDownloadingState(true);
-
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"Download accepted and UI switched to downloading state.");
-    }
-    else
-    {
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"Download was not started.");
     }
 }
 
 void MainWindow::OnCancelClicked()
 {
-    DownloadLogger::Write(
-        L"MainWindow",
-        L"OnCancelClicked() called.");
-
+    if (m_cancelPending) return;
+    m_cancelPending = true;
     DownloadManager::CancelDownload();
-
     EnableWindow(m_cancelButton, FALSE);
     EnableWindow(m_pauseButton, FALSE);
-
-    SetWindowTextW(
-        m_statusLabel,
-        L"Cancelling...");
-
-    DownloadLogger::Write(
-        L"MainWindow",
-        L"Cancel UI updated to 'Cancelling...'.");
+    SetWindowTextW(m_statusLabel, L"Cancelling...");
 }
 
 void MainWindow::OnPauseResumeClicked(HWND hwnd)
 {
     if (!m_isPaused)
     {
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"Pause requested.");
-
         DownloadManager::PauseDownload();
-
         EnableWindow(m_pauseButton, FALSE);
-
-        SetWindowTextW(
-            m_statusLabel,
-            L"Pausing...");
+        SetWindowTextW(m_statusLabel, L"Pausing...");
     }
     else
     {
-        DownloadLogger::Write(
-            L"MainWindow",
-            L"Resume requested.");
-
         m_isPaused = false;
-
-        StartDownloadWithParams(
-            hwnd,
-            m_lastUrl,
-            m_lastIsMp3,
-            m_lastIsPlaylist);
+        StartDownloadWithParams(hwnd, m_lastUrl, m_lastIsMp3, m_lastIsPlaylist);
     }
 }
