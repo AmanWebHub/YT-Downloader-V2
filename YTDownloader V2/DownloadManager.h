@@ -27,25 +27,13 @@ struct DownloadFinishedInfo
 
 namespace DownloadManager
 {
-    // Starts yt-dlp on a background thread.
-    // The UI thread is never blocked.
     bool StartDownload(
         HWND ownerWindow,
         const std::wstring& url,
         bool isMp3,
         bool isPlaylist);
 
-    // Fully stops the current download.
-    //
-    // The partial .part files belonging to the current download
-    // are removed.
-    //
-    // This is a permanent cancellation and cannot be resumed.
     void CancelDownload();
 
-    // Stops the current download but keeps the partial .part files.
-    //
-    // A later StartDownload() using the same URL will use yt-dlp's
-    // --continue option to resume the download.
     void PauseDownload();
 }
