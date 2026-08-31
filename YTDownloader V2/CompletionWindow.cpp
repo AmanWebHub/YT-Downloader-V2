@@ -2,18 +2,14 @@
 
 #include <shellapi.h>
 #include <shlobj.h>
-#include <uxtheme.h>
-#include <vector>
 
 #pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "uxtheme.lib")
 
 namespace
 {
     const wchar_t CLASS_NAME[] =
         L"ITDownloaderV2CompletionWindow";
 
-    constexpr int IDC_COMP_PATH_LABEL  = 2001;
     constexpr int IDC_COMP_OPEN        = 2002;
     constexpr int IDC_COMP_OPEN_WITH   = 2003;
     constexpr int IDC_COMP_OPEN_FOLDER = 2004;
@@ -92,10 +88,14 @@ namespace
                 border);
 
         HGDIOBJ oldBrush =
-            SelectObject(hdc, brush);
+            SelectObject(
+                hdc,
+                brush);
 
         HGDIOBJ oldPen =
-            SelectObject(hdc, pen);
+            SelectObject(
+                hdc,
+                pen);
 
         RoundRect(
             hdc,
@@ -117,98 +117,13 @@ namespace
         DeleteObject(pen);
         DeleteObject(brush);
     }
-
-    std::wstring FindNewestFileInFolder(
-        const std::wstring& folder,
-        const std::vector<std::wstring>& extensions)
-    {
-        if (folder.empty())
-            return L"";
-
-        const std::wstring searchPattern =
-            folder + L"\\*";
-
-        WIN32_FIND_DATAW fd{};
-
-        HANDLE hFind =
-            FindFirstFileW(
-                searchPattern.c_str(),
-                &fd);
-
-        if (hFind == INVALID_HANDLE_VALUE)
-            return L"";
-
-        std::wstring bestPath;
-
-        ULARGE_INTEGER bestTime{};
-        bestTime.QuadPart = 0;
-
-        do
-        {
-            if (fd.dwFileAttributes &
-                FILE_ATTRIBUTE_DIRECTORY)
-            {
-                continue;
-            }
-
-            const std::wstring name =
-                fd.cFileName;
-
-            bool matches = false;
-
-            for (const auto& ext : extensions)
-            {
-                if (name.size() >= ext.size())
-                {
-                    const wchar_t* nameExt =
-                        name.c_str() +
-                        name.size() -
-                        ext.size();
-
-                    if (_wcsicmp(
-                            nameExt,
-                            ext.c_str()) == 0)
-                    {
-                        matches = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!matches)
-                continue;
-
-            ULARGE_INTEGER fileTime{};
-
-            fileTime.LowPart =
-                fd.ftLastWriteTime.dwLowDateTime;
-
-            fileTime.HighPart =
-                fd.ftLastWriteTime.dwHighDateTime;
-
-            if (fileTime.QuadPart >
-                bestTime.QuadPart)
-            {
-                bestTime = fileTime;
-
-                bestPath =
-                    folder +
-                    L"\\" +
-                    name;
-            }
-
-        } while (FindNextFileW(hFind, &fd));
-
-        FindClose(hFind);
-
-        return bestPath;
-    }
 }
 
 CompletionWindow* CompletionWindow::Create(
     HINSTANCE hInstance,
     HWND ownerToRestore,
-    const std::wstring& filePath)
+    const std::wstring& filePath,
+    bool isPlaylist)
 {
     CompletionWindow* self =
         new CompletionWindow();
@@ -219,43 +134,28 @@ CompletionWindow* CompletionWindow::Create(
     self->m_filePath =
         filePath;
 
+    self->m_isPlaylist =
+        isPlaylist;
+
+    // Determine whether the supplied completion path is a folder.
     DWORD attributes =
         GetFileAttributesW(
             filePath.c_str());
 
-    bool isFolder =
+    self->m_isFolderOnly =
         attributes != INVALID_FILE_ATTRIBUTES &&
         (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
-    if (isFolder)
+    // A playlist is always treated as a folder-style completion.
+    //
+    // This is the important part for MP3 playlists:
+    // DownloadWorker may report the final MP3 file as resolvedFilePath,
+    // but the playlist flag tells us that the completion represents
+    // multiple downloaded items.
+    if (self->m_isPlaylist)
     {
-        const std::vector<std::wstring> extensions =
-        {
-            L".mp4",
-            L".mkv",
-            L".webm",
-            L".mp3",
-            L".m4a",
-            L".flac",
-            L".wav"
-        };
-
-        const std::wstring foundFile =
-            FindNewestFileInFolder(
-                filePath,
-                extensions);
-
-        if (!foundFile.empty())
-        {
-            self->m_filePath =
-                foundFile;
-
-            isFolder = false;
-        }
+        self->m_isFolderOnly = true;
     }
-
-    self->m_isFolderOnly =
-        isFolder;
 
     WNDCLASSW wc{};
 
@@ -355,6 +255,9 @@ CompletionWindow* CompletionWindow::Create(
     UpdateWindow(
         self->m_hwnd);
 
+    SetForegroundWindow(
+        self->m_hwnd);
+
     return self;
 }
 
@@ -369,7 +272,7 @@ LRESULT CALLBACK CompletionWindow::WindowProcStatic(
 
     if (uMsg == WM_NCCREATE)
     {
-        const auto* cs =
+        const CREATESTRUCTW* cs =
             reinterpret_cast<
                 const CREATESTRUCTW*>(
                     lParam);
@@ -490,6 +393,7 @@ LRESULT CompletionWindow::HandleMessage(
             reinterpret_cast<
                 const DRAWITEMSTRUCT*>(
                     lParam));
+
         return TRUE;
 
     case WM_COMMAND:
@@ -537,17 +441,10 @@ LRESULT CompletionWindow::HandleMessage(
                 m_ownerToRestore);
         }
 
-        DeleteFont(
-            m_titleFont);
-
-        DeleteFont(
-            m_bodyFont);
-
-        DeleteFont(
-            m_smallFont);
-
-        DeleteFont(
-            m_buttonFont);
+        DeleteFont(m_titleFont);
+        DeleteFont(m_bodyFont);
+        DeleteFont(m_smallFont);
+        DeleteFont(m_buttonFont);
 
         delete this;
 
@@ -628,12 +525,12 @@ void CompletionWindow::CreateControls(
 
     m_statusLabel =
         makeStatic(
-            m_isFolderOnly
-                ? L"Your downloads are ready."
+            m_isPlaylist
+                ? L"Your playlist downloads are ready."
                 : L"Your file is ready.",
             38,
             58,
-            520,
+            540,
             20,
             m_smallFont);
 
@@ -695,12 +592,18 @@ void CompletionWindow::CreateControls(
     };
 
     constexpr int buttonY = 190;
-    constexpr int buttonWidth = 132;
     constexpr int gap = 12;
-    constexpr int left = 28;
 
-    if (!m_isFolderOnly)
+    // ---------------------------------------------------------------
+    // Single download
+    //
+    // Open | Open With... | Open Folder | Done
+    // ---------------------------------------------------------------
+    if (!m_isPlaylist)
     {
+        constexpr int buttonWidth = 132;
+        constexpr int left = 28;
+
         const int x1 =
             left;
 
@@ -741,21 +644,28 @@ void CompletionWindow::CreateControls(
             buttonY,
             buttonWidth);
     }
+    // ---------------------------------------------------------------
+    // Playlist
+    //
+    // Open Folder | Done
+    // ---------------------------------------------------------------
     else
     {
+        constexpr int buttonWidth = 274;
+
         makeButton(
             L"Open Folder",
             IDC_COMP_OPEN_FOLDER,
             28,
             buttonY,
-            274);
+            buttonWidth);
 
         makeButton(
             L"Done",
             IDC_COMP_DONE,
             318,
             buttonY,
-            274);
+            buttonWidth);
     }
 }
 
@@ -1021,8 +931,11 @@ void CompletionWindow::OnOpenWithClicked()
 
 void CompletionWindow::OnOpenFolderClicked()
 {
-    if (m_isFolderOnly)
+    if (m_isPlaylist ||
+        m_isFolderOnly)
     {
+        // For playlists, the MainWindow should pass the
+        // downloads folder. This opens that folder directly.
         ShellExecuteW(
             m_hwnd,
             L"open",

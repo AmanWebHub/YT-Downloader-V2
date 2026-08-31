@@ -9,7 +9,8 @@ public:
     static CompletionWindow* Create(
         HINSTANCE hInstance,
         HWND ownerToRestore,
-        const std::wstring& filePath);
+        const std::wstring& filePath,
+        bool isPlaylist);
 
 private:
     static LRESULT CALLBACK WindowProcStatic(
@@ -43,5 +44,10 @@ private:
     HFONT m_buttonFont = nullptr;
 
     std::wstring m_filePath;
+
+    // True when the completed operation was a playlist download.
+    bool m_isPlaylist = false;
+
+    // True when the supplied path itself is a folder.
     bool m_isFolderOnly = false;
 };

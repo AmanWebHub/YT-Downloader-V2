@@ -297,10 +297,18 @@ LRESULT MainWindow::HandleMessage(HWND hwnd, UINT uMsg,
                 SendMessageW(m_progressBar, PBM_SETPOS, 100, 0);
                 UpdateProgressText(100);
 
+                // IMPORTANT:
+                // Playlist completion must always use the downloads folder,
+                // even for MP3. The MP3 worker can report an individual
+                // resolved file path, but the UI must treat the operation
+                // as a playlist when m_lastIsPlaylist is true.
                 CompletionWindow::Create(
                     m_hInstance,
                     m_hwnd,
-                    filePath.empty() ? folder : filePath);
+                    m_lastIsPlaylist
+                        ? folder
+                        : (filePath.empty() ? folder : filePath),
+                    m_lastIsPlaylist);
             }
             else
             {
@@ -839,7 +847,7 @@ void MainWindow::OnDownloadClicked(HWND hwnd)
     GetWindowTextW(
         m_urlEdit,
         urlBuffer,
-        static_cast<int>(std::size(urlBuffer)));
+        static_cast<int>(sizeof(urlBuffer) / sizeof(urlBuffer[0])));
 
     std::wstring url = urlBuffer;
 
