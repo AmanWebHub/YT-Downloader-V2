@@ -49,7 +49,6 @@ namespace
     constexpr COLORREF CLR_DISABLED =
         RGB(170, 174, 181);
 
-
     // ------------------------------------------------------------
     // FONT HELPERS
     // ------------------------------------------------------------
@@ -73,7 +72,7 @@ namespace
             L"Segoe UI");
     }
 
-    void DeleteFont(HFONT& font)
+    void DeleteFont(HFONT &font)
     {
         if (font)
         {
@@ -82,14 +81,13 @@ namespace
         }
     }
 
-
     // ------------------------------------------------------------
     // ROUNDED RECTANGLE HELPER
     // ------------------------------------------------------------
 
     void FillRounded(
         HDC hdc,
-        const RECT& rc,
+        const RECT &rc,
         COLORREF fill,
         COLORREF border,
         int radius = 8,
@@ -127,7 +125,6 @@ namespace
     }
 }
 
-
 // ============================================================
 // CREATE MAIN WINDOW
 // ============================================================
@@ -135,14 +132,13 @@ namespace
 bool MainWindow::Create(
     HINSTANCE hInstance,
     int nCmdShow,
-    const std::wstring& initialUrl)
+    const std::wstring &initialUrl)
 {
     m_hInstance = hInstance;
 
     INITCOMMONCONTROLSEX cc{
         sizeof(cc),
-        ICC_PROGRESS_CLASS
-    };
+        ICC_PROGRESS_CLASS};
 
     InitCommonControlsEx(&cc);
 
@@ -176,9 +172,9 @@ bool MainWindow::Create(
         CLASS_NAME,
         L"IT Downloader V2",
         WS_OVERLAPPED |
-        WS_CAPTION |
-        WS_SYSMENU |
-        WS_MINIMIZEBOX,
+            WS_CAPTION |
+            WS_SYSMENU |
+            WS_MINIMIZEBOX,
         CW_USEDEFAULT,
         CW_USEDEFAULT,
         720,
@@ -240,7 +236,6 @@ bool MainWindow::Create(
     return true;
 }
 
-
 // ============================================================
 // WINDOW PROCEDURE
 // ============================================================
@@ -251,15 +246,15 @@ LRESULT CALLBACK MainWindow::WindowProcStatic(
     WPARAM wParam,
     LPARAM lParam)
 {
-    MainWindow* self = nullptr;
+    MainWindow *self = nullptr;
 
     if (uMsg == WM_NCCREATE)
     {
-        auto* cs =
-            reinterpret_cast<CREATESTRUCTW*>(lParam);
+        auto *cs =
+            reinterpret_cast<CREATESTRUCTW *>(lParam);
 
         self =
-            reinterpret_cast<MainWindow*>(
+            reinterpret_cast<MainWindow *>(
                 cs->lpCreateParams);
 
         SetWindowLongPtrW(
@@ -270,25 +265,24 @@ LRESULT CALLBACK MainWindow::WindowProcStatic(
     else
     {
         self =
-            reinterpret_cast<MainWindow*>(
+            reinterpret_cast<MainWindow *>(
                 GetWindowLongPtrW(
                     hwnd,
                     GWLP_USERDATA));
     }
 
     return self
-        ? self->HandleMessage(
-            hwnd,
-            uMsg,
-            wParam,
-            lParam)
-        : DefWindowProcW(
-            hwnd,
-            uMsg,
-            wParam,
-            lParam);
+               ? self->HandleMessage(
+                     hwnd,
+                     uMsg,
+                     wParam,
+                     lParam)
+               : DefWindowProcW(
+                     hwnd,
+                     uMsg,
+                     wParam,
+                     lParam);
 }
-
 
 // ============================================================
 // MESSAGE HANDLER
@@ -306,11 +300,9 @@ LRESULT MainWindow::HandleMessage(
         CreateControls(hwnd);
         return 0;
 
-
     case WM_ERASEBKGND:
         // Background is painted manually.
         return 1;
-
 
     case WM_PAINT:
     {
@@ -369,10 +361,9 @@ LRESULT MainWindow::HandleMessage(
         return 0;
     }
 
-
-    // --------------------------------------------------------
-    // STATIC TEXT
-    // --------------------------------------------------------
+        // --------------------------------------------------------
+        // STATIC TEXT
+        // --------------------------------------------------------
 
     case WM_CTLCOLORSTATIC:
     {
@@ -382,6 +373,41 @@ LRESULT MainWindow::HandleMessage(
         HWND control =
             reinterpret_cast<HWND>(lParam);
 
+        // The status area is inside the white progress card.
+        // Give it an opaque background so old status text is
+        // completely erased before the new text is drawn.
+        if (control == m_statusLabel ||
+            control == m_progressPercent)
+        {
+            SetBkMode(
+                hdc,
+                OPAQUE);
+
+            SetBkColor(
+                hdc,
+                CLR_WHITE);
+
+            if (control == m_progressPercent)
+            {
+                SetTextColor(
+                    hdc,
+                    CLR_SECONDARY);
+            }
+            else
+            {
+                SetTextColor(
+                    hdc,
+                    CLR_TEXT);
+            }
+
+            static HBRUSH whiteBrush =
+                CreateSolidBrush(CLR_WHITE);
+
+            return reinterpret_cast<LRESULT>(
+                whiteBrush);
+        }
+
+        // All other static controls remain transparent.
         SetBkMode(
             hdc,
             TRANSPARENT);
@@ -390,22 +416,13 @@ LRESULT MainWindow::HandleMessage(
             hdc,
             CLR_TEXT);
 
-        // Progress percentage is slightly darker.
-        if (control == m_progressPercent)
-        {
-            SetTextColor(
-                hdc,
-                CLR_SECONDARY);
-        }
-
         return reinterpret_cast<LRESULT>(
             GetStockObject(NULL_BRUSH));
     }
 
-
-    // --------------------------------------------------------
-    // URL EDIT
-    // --------------------------------------------------------
+        // --------------------------------------------------------
+        // URL EDIT
+        // --------------------------------------------------------
 
     case WM_CTLCOLOREDIT:
     {
@@ -427,10 +444,9 @@ LRESULT MainWindow::HandleMessage(
             brush);
     }
 
-
-    // --------------------------------------------------------
-    // BUTTON COMMANDS
-    // --------------------------------------------------------
+        // --------------------------------------------------------
+        // BUTTON COMMANDS
+        // --------------------------------------------------------
 
     case WM_COMMAND:
 
@@ -462,23 +478,21 @@ LRESULT MainWindow::HandleMessage(
 
         break;
 
-
-    // --------------------------------------------------------
-    // OWNER DRAWN BUTTONS
-    // --------------------------------------------------------
+        // --------------------------------------------------------
+        // OWNER DRAWN BUTTONS
+        // --------------------------------------------------------
 
     case WM_DRAWITEM:
 
         DrawOwnerButton(
-            reinterpret_cast<const DRAWITEMSTRUCT*>(
+            reinterpret_cast<const DRAWITEMSTRUCT *>(
                 lParam));
 
         return TRUE;
 
-
-    // --------------------------------------------------------
-    // DOWNLOAD PROGRESS
-    // --------------------------------------------------------
+        // --------------------------------------------------------
+        // DOWNLOAD PROGRESS
+        // --------------------------------------------------------
 
     case WM_APP_DOWNLOAD_PROGRESS:
 
@@ -496,15 +510,14 @@ LRESULT MainWindow::HandleMessage(
 
         return 0;
 
-
-    // --------------------------------------------------------
-    // DOWNLOAD STATUS
-    // --------------------------------------------------------
+        // --------------------------------------------------------
+        // DOWNLOAD STATUS
+        // --------------------------------------------------------
 
     case WM_APP_DOWNLOAD_STATUS:
     {
-        auto* status =
-            reinterpret_cast<std::wstring*>(lParam);
+        auto *status =
+            reinterpret_cast<std::wstring *>(lParam);
 
         if (status)
         {
@@ -517,12 +530,13 @@ LRESULT MainWindow::HandleMessage(
                     m_statusLabel,
                     status->c_str());
 
-                // Make sure the status label redraws
-                // immediately when the text changes.
-                InvalidateRect(
+                RedrawWindow(
                     m_statusLabel,
                     nullptr,
-                    TRUE);
+                    nullptr,
+                    RDW_INVALIDATE |
+                        RDW_ERASE |
+                        RDW_UPDATENOW);
             }
 
             delete status;
@@ -531,15 +545,14 @@ LRESULT MainWindow::HandleMessage(
         return 0;
     }
 
-
-    // --------------------------------------------------------
-    // DOWNLOAD FINISHED
-    // --------------------------------------------------------
+        // --------------------------------------------------------
+        // DOWNLOAD FINISHED
+        // --------------------------------------------------------
 
     case WM_APP_DOWNLOAD_FINISHED:
     {
-        auto* info =
-            reinterpret_cast<DownloadFinishedInfo*>(
+        auto *info =
+            reinterpret_cast<DownloadFinishedInfo *>(
                 lParam);
 
         if (!info)
@@ -559,7 +572,6 @@ LRESULT MainWindow::HandleMessage(
 
         const bool wasCancelled =
             info->wasCancelled;
-
 
         // ----------------------------------------------------
         // PAUSED
@@ -588,7 +600,6 @@ LRESULT MainWindow::HandleMessage(
                 FALSE);
         }
 
-
         // ----------------------------------------------------
         // CANCELLED
         // ----------------------------------------------------
@@ -603,7 +614,6 @@ LRESULT MainWindow::HandleMessage(
                 m_statusLabel,
                 L"Download cancelled.");
         }
-
 
         // ----------------------------------------------------
         // FINISHED
@@ -636,8 +646,8 @@ LRESULT MainWindow::HandleMessage(
                     m_lastIsPlaylist
                         ? folder
                         : (filePath.empty()
-                            ? folder
-                            : filePath),
+                               ? folder
+                               : filePath),
                     m_lastIsPlaylist);
             }
             else
@@ -663,10 +673,9 @@ LRESULT MainWindow::HandleMessage(
         return 0;
     }
 
-
-    // --------------------------------------------------------
-    // WINDOW DESTROY
-    // --------------------------------------------------------
+        // --------------------------------------------------------
+        // WINDOW DESTROY
+        // --------------------------------------------------------
 
     case WM_DESTROY:
 
@@ -689,7 +698,6 @@ LRESULT MainWindow::HandleMessage(
         wParam,
         lParam);
 }
-
 
 // ============================================================
 // CREATE CONTROLS
@@ -716,13 +724,12 @@ void MainWindow::CreateControls(HWND hwnd)
     m_buttonFont =
         MakeFont(13, FW_SEMIBOLD);
 
-
     // --------------------------------------------------------
     // STATIC CONTROL HELPER
     // --------------------------------------------------------
 
     auto makeStatic =
-        [&](const wchar_t* text,
+        [&](const wchar_t *text,
             int x,
             int y,
             int w,
@@ -734,7 +741,7 @@ void MainWindow::CreateControls(HWND hwnd)
                 L"STATIC",
                 text,
                 WS_VISIBLE |
-                WS_CHILD,
+                    WS_CHILD,
                 x,
                 y,
                 w,
@@ -752,7 +759,6 @@ void MainWindow::CreateControls(HWND hwnd)
 
         return ctrl;
     };
-
 
     // ========================================================
     // HEADER
@@ -774,7 +780,6 @@ void MainWindow::CreateControls(HWND hwnd)
         20,
         m_smallFont);
 
-
     // ========================================================
     // URL SECTION
     // ========================================================
@@ -787,15 +792,14 @@ void MainWindow::CreateControls(HWND hwnd)
         20,
         m_sectionFont);
 
-
     m_urlEdit =
         CreateWindowExW(
             WS_EX_CLIENTEDGE,
             L"EDIT",
             L"",
             WS_VISIBLE |
-            WS_CHILD |
-            ES_AUTOHSCROLL,
+                WS_CHILD |
+                ES_AUTOHSCROLL,
             32,
             124,
             656,
@@ -823,7 +827,6 @@ void MainWindow::CreateControls(HWND hwnd)
         L"Explorer",
         nullptr);
 
-
     // ========================================================
     // FORMAT SECTION
     // ========================================================
@@ -836,15 +839,14 @@ void MainWindow::CreateControls(HWND hwnd)
         20,
         m_sectionFont);
 
-
     // MP4
     m_mp4Button =
         CreateWindowW(
             L"BUTTON",
             L"MP4 Video",
             WS_VISIBLE |
-            WS_CHILD |
-            BS_OWNERDRAW,
+                WS_CHILD |
+                BS_OWNERDRAW,
             32,
             212,
             318,
@@ -854,15 +856,14 @@ void MainWindow::CreateControls(HWND hwnd)
             nullptr,
             nullptr);
 
-
     // MP3
     m_mp3Button =
         CreateWindowW(
             L"BUTTON",
             L"MP3 Audio",
             WS_VISIBLE |
-            WS_CHILD |
-            BS_OWNERDRAW,
+                WS_CHILD |
+                BS_OWNERDRAW,
             370,
             212,
             318,
@@ -871,7 +872,6 @@ void MainWindow::CreateControls(HWND hwnd)
             (HMENU)(INT_PTR)IDC_RADIO_MP3,
             nullptr,
             nullptr);
-
 
     // ========================================================
     // ACTION BUTTONS
@@ -882,8 +882,8 @@ void MainWindow::CreateControls(HWND hwnd)
             L"BUTTON",
             L"Download",
             WS_VISIBLE |
-            WS_CHILD |
-            BS_OWNERDRAW,
+                WS_CHILD |
+                BS_OWNERDRAW,
             32,
             304,
             318,
@@ -893,13 +893,12 @@ void MainWindow::CreateControls(HWND hwnd)
             nullptr,
             nullptr);
 
-
     m_pauseButton =
         CreateWindowW(
             L"BUTTON",
             L"Pause",
             WS_CHILD |
-            BS_OWNERDRAW,
+                BS_OWNERDRAW,
             370,
             304,
             154,
@@ -909,13 +908,12 @@ void MainWindow::CreateControls(HWND hwnd)
             nullptr,
             nullptr);
 
-
     m_cancelButton =
         CreateWindowW(
             L"BUTTON",
             L"Cancel",
             WS_CHILD |
-            BS_OWNERDRAW,
+                BS_OWNERDRAW,
             534,
             304,
             154,
@@ -924,7 +922,6 @@ void MainWindow::CreateControls(HWND hwnd)
             (HMENU)(INT_PTR)IDC_CANCEL_BTN,
             nullptr,
             nullptr);
-
 
     // ========================================================
     // PROGRESS SECTION
@@ -937,7 +934,6 @@ void MainWindow::CreateControls(HWND hwnd)
         100,
         20,
         m_sectionFont);
-
 
     // Percentage.
     m_progressPercent =
@@ -955,8 +951,7 @@ void MainWindow::CreateControls(HWND hwnd)
         GetWindowLongPtrW(
             m_progressPercent,
             GWL_STYLE) |
-        SS_RIGHT);
-
+            SS_RIGHT);
 
     // Progress bar.
     m_progressBar =
@@ -965,8 +960,8 @@ void MainWindow::CreateControls(HWND hwnd)
             PROGRESS_CLASSW,
             nullptr,
             WS_VISIBLE |
-            WS_CHILD |
-            PBS_SMOOTH,
+                WS_CHILD |
+                PBS_SMOOTH,
             32,
             402,
             656,
@@ -1000,7 +995,6 @@ void MainWindow::CreateControls(HWND hwnd)
         0,
         CLR_PROGRESS_BG);
 
-
     // ========================================================
     // STATUS
     // ========================================================
@@ -1013,7 +1007,6 @@ void MainWindow::CreateControls(HWND hwnd)
             52,
             20,
             m_smallFont);
-
 
     // IMPORTANT:
     // The status label is deliberately limited to the area
@@ -1041,7 +1034,6 @@ void MainWindow::CreateControls(HWND hwnd)
         GWL_STYLE,
         statusStyle);
 
-
     // Initial state.
     SetFormatSelection(false);
 
@@ -1049,7 +1041,6 @@ void MainWindow::CreateControls(HWND hwnd)
 
     ApplyControlFonts();
 }
-
 
 // ============================================================
 // APPLY BUTTON FONTS
@@ -1078,14 +1069,13 @@ void MainWindow::ApplyControlFonts()
     setFont(m_mp3Button);
 }
 
-
 // ============================================================
 // PAINT BACKGROUND
 // ============================================================
 
 void MainWindow::PaintBackground(
     HDC hdc,
-    const RECT& clientRect)
+    const RECT &clientRect)
 {
     // --------------------------------------------------------
     // Main background
@@ -1101,7 +1091,6 @@ void MainWindow::PaintBackground(
 
     DeleteObject(bgBrush);
 
-
     // --------------------------------------------------------
     // Header divider
     // --------------------------------------------------------
@@ -1110,8 +1099,7 @@ void MainWindow::PaintBackground(
         32,
         82,
         clientRect.right - 32,
-        83
-    };
+        83};
 
     HBRUSH dividerBrush =
         CreateSolidBrush(CLR_BORDER);
@@ -1123,7 +1111,6 @@ void MainWindow::PaintBackground(
 
     DeleteObject(dividerBrush);
 
-
     // --------------------------------------------------------
     // Format card background
     // --------------------------------------------------------
@@ -1132,8 +1119,7 @@ void MainWindow::PaintBackground(
         24,
         200,
         clientRect.right - 24,
-        290
-    };
+        290};
 
     FillRounded(
         hdc,
@@ -1143,7 +1129,6 @@ void MainWindow::PaintBackground(
         10,
         1);
 
-
     // --------------------------------------------------------
     // Action background
     // --------------------------------------------------------
@@ -1152,8 +1137,7 @@ void MainWindow::PaintBackground(
         24,
         294,
         clientRect.right - 24,
-        358
-    };
+        358};
 
     FillRounded(
         hdc,
@@ -1163,7 +1147,6 @@ void MainWindow::PaintBackground(
         10,
         1);
 
-
     // --------------------------------------------------------
     // Progress background
     // --------------------------------------------------------
@@ -1172,8 +1155,7 @@ void MainWindow::PaintBackground(
         24,
         364,
         clientRect.right - 24,
-        462
-    };
+        462};
 
     FillRounded(
         hdc,
@@ -1184,16 +1166,15 @@ void MainWindow::PaintBackground(
         1);
 }
 
-
 // ============================================================
 // FORMAT CARD
 // ============================================================
 
 void MainWindow::DrawFormatCard(
     HDC hdc,
-    const RECT& rect,
-    const wchar_t* title,
-    const wchar_t* subtitle,
+    const RECT &rect,
+    const wchar_t *title,
+    const wchar_t *subtitle,
     bool selected)
 {
     const COLORREF fill =
@@ -1211,7 +1192,6 @@ void MainWindow::DrawFormatCard(
             ? CLR_RED_DARK
             : CLR_TEXT;
 
-
     FillRounded(
         hdc,
         rect,
@@ -1220,11 +1200,9 @@ void MainWindow::DrawFormatCard(
         9,
         selected ? 2 : 1);
 
-
     SetBkMode(
         hdc,
         TRANSPARENT);
-
 
     // --------------------------------------------------------
     // Title
@@ -1242,8 +1220,7 @@ void MainWindow::DrawFormatCard(
         rect.left + 18,
         rect.top + 8,
         rect.right - 55,
-        rect.top + 34
-    };
+        rect.top + 34};
 
     DrawTextW(
         hdc,
@@ -1251,9 +1228,8 @@ void MainWindow::DrawFormatCard(
         -1,
         &titleRect,
         DT_LEFT |
-        DT_SINGLELINE |
-        DT_VCENTER);
-
+            DT_SINGLELINE |
+            DT_VCENTER);
 
     // --------------------------------------------------------
     // Subtitle
@@ -1271,8 +1247,7 @@ void MainWindow::DrawFormatCard(
         rect.left + 18,
         rect.top + 37,
         rect.right - 18,
-        rect.bottom - 7
-    };
+        rect.bottom - 7};
 
     DrawTextW(
         hdc,
@@ -1280,9 +1255,8 @@ void MainWindow::DrawFormatCard(
         -1,
         &subtitleRect,
         DT_LEFT |
-        DT_SINGLELINE |
-        DT_VCENTER);
-
+            DT_SINGLELINE |
+            DT_VCENTER);
 
     // --------------------------------------------------------
     // Selected check mark
@@ -1295,7 +1269,6 @@ void MainWindow::DrawFormatCard(
 
         const int cy =
             rect.top + 33;
-
 
         HBRUSH brush =
             CreateSolidBrush(CLR_RED);
@@ -1317,7 +1290,6 @@ void MainWindow::DrawFormatCard(
             oldBrush);
 
         DeleteObject(brush);
-
 
         HPEN pen =
             CreatePen(
@@ -1354,13 +1326,12 @@ void MainWindow::DrawFormatCard(
     }
 }
 
-
 // ============================================================
 // OWNER DRAW BUTTONS
 // ============================================================
 
 void MainWindow::DrawOwnerButton(
-    const DRAWITEMSTRUCT* dis)
+    const DRAWITEMSTRUCT *dis)
 {
     if (!dis)
         return;
@@ -1377,7 +1348,6 @@ void MainWindow::DrawOwnerButton(
     const bool pressed =
         (dis->itemState & ODS_SELECTED) != 0;
 
-
     // --------------------------------------------------------
     // FORMAT CARDS
     // --------------------------------------------------------
@@ -1386,8 +1356,7 @@ void MainWindow::DrawOwnerButton(
         dis->CtlID == IDC_RADIO_MP3)
     {
         const bool selected =
-            (dis->CtlID == IDC_RADIO_MP3)
-                == m_selectedMp3;
+            (dis->CtlID == IDC_RADIO_MP3) == m_selectedMp3;
 
         DrawFormatCard(
             hdc,
@@ -1403,7 +1372,6 @@ void MainWindow::DrawOwnerButton(
         return;
     }
 
-
     // --------------------------------------------------------
     // NORMAL BUTTONS
     // --------------------------------------------------------
@@ -1417,7 +1385,6 @@ void MainWindow::DrawOwnerButton(
     COLORREF border =
         CLR_BORDER;
 
-
     // Download button.
     if (dis->CtlID == IDC_DOWNLOAD_BTN)
     {
@@ -1425,8 +1392,8 @@ void MainWindow::DrawOwnerButton(
             disabled
                 ? RGB(215, 218, 222)
                 : (pressed
-                    ? CLR_RED_DARK
-                    : CLR_RED);
+                       ? CLR_RED_DARK
+                       : CLR_RED);
 
         text =
             CLR_WHITE;
@@ -1434,7 +1401,6 @@ void MainWindow::DrawOwnerButton(
         border =
             fill;
     }
-
 
     // Disabled button.
     else if (disabled)
@@ -1449,7 +1415,6 @@ void MainWindow::DrawOwnerButton(
             RGB(220, 222, 226);
     }
 
-
     // Pressed button.
     else if (pressed)
     {
@@ -1460,7 +1425,6 @@ void MainWindow::DrawOwnerButton(
             RGB(194, 197, 202);
     }
 
-
     FillRounded(
         hdc,
         rc,
@@ -1469,14 +1433,12 @@ void MainWindow::DrawOwnerButton(
         8,
         1);
 
-
     wchar_t label[128]{};
 
     GetWindowTextW(
         dis->hwndItem,
         label,
         127);
-
 
     SetBkMode(
         hdc,
@@ -1490,16 +1452,14 @@ void MainWindow::DrawOwnerButton(
         hdc,
         m_buttonFont);
 
-
     DrawTextW(
         hdc,
         label,
         -1,
         &rc,
         DT_CENTER |
-        DT_VCENTER |
-        DT_SINGLELINE);
-
+            DT_VCENTER |
+            DT_SINGLELINE);
 
     // Focus rectangle.
     if (dis->itemState & ODS_FOCUS)
@@ -1517,7 +1477,6 @@ void MainWindow::DrawOwnerButton(
             &focus);
     }
 }
-
 
 // ============================================================
 // FORMAT SELECTION
@@ -1546,7 +1505,6 @@ void MainWindow::SetFormatSelection(
     }
 }
 
-
 // ============================================================
 // PROGRESS TEXT
 // ============================================================
@@ -1555,11 +1513,9 @@ void MainWindow::UpdateProgressText(
     int progress)
 {
     progress =
-        (std::max)(
-            0,
-            (std::min)(
-                100,
-                progress));
+        (std::max)(0,
+                   (std::min)(100,
+                              progress));
 
     if (m_progressPercent)
     {
@@ -1572,7 +1528,6 @@ void MainWindow::UpdateProgressText(
             text.c_str());
     }
 }
-
 
 // ============================================================
 // DOWNLOADING STATE
@@ -1600,7 +1555,6 @@ void MainWindow::SetDownloadingState(
         m_downloadButton,
         !downloading);
 
-
     if (downloading)
     {
         ShowWindow(
@@ -1611,11 +1565,9 @@ void MainWindow::SetDownloadingState(
             m_cancelButton,
             SW_SHOW);
 
-
         SetWindowTextW(
             m_pauseButton,
             L"Pause");
-
 
         EnableWindow(
             m_pauseButton,
@@ -1642,13 +1594,11 @@ void MainWindow::SetDownloadingState(
             false;
     }
 
-
     InvalidateRect(
         m_hwnd,
         nullptr,
         FALSE);
 }
-
 
 // ============================================================
 // PLAYLIST DETECTION
@@ -1656,24 +1606,19 @@ void MainWindow::SetDownloadingState(
 
 int MainWindow::ResolvePlaylistChoice(
     HWND hwnd,
-    const std::wstring& url)
+    const std::wstring &url)
 {
     const bool hasList =
-        url.find(L"list=")
-        != std::wstring::npos;
+        url.find(L"list=") != std::wstring::npos;
 
     const bool hasVideo =
-        url.find(L"v=")
-        != std::wstring::npos;
-
+        url.find(L"v=") != std::wstring::npos;
 
     if (!hasList)
         return 0;
 
-
     if (!hasVideo)
         return 1;
-
 
     const int result =
         MessageBoxW(
@@ -1683,20 +1628,16 @@ int MainWindow::ResolvePlaylistChoice(
             L"No: download this video only",
             L"Playlist detected",
             MB_YESNOCANCEL |
-            MB_ICONQUESTION);
-
+                MB_ICONQUESTION);
 
     if (result == IDYES)
         return 1;
 
-
     if (result == IDNO)
         return 0;
 
-
     return -1;
 }
-
 
 // ============================================================
 // DOWNLOAD CLICKED
@@ -1717,7 +1658,6 @@ void MainWindow::OnDownloadClicked(
     std::wstring url =
         urlBuffer;
 
-
     if (url.empty())
     {
         MessageBoxW(
@@ -1725,7 +1665,7 @@ void MainWindow::OnDownloadClicked(
             L"Please enter a video or playlist URL.",
             L"IT Downloader V2",
             MB_OK |
-            MB_ICONINFORMATION);
+                MB_ICONINFORMATION);
 
         SetFocus(
             m_urlEdit);
@@ -1733,16 +1673,13 @@ void MainWindow::OnDownloadClicked(
         return;
     }
 
-
     const int choice =
         ResolvePlaylistChoice(
             hwnd,
             url);
 
-
     if (choice == -1)
         return;
-
 
     StartDownloadWithParams(
         hwnd,
@@ -1751,14 +1688,13 @@ void MainWindow::OnDownloadClicked(
         choice == 1);
 }
 
-
 // ============================================================
 // START DOWNLOAD
 // ============================================================
 
 void MainWindow::StartDownloadWithParams(
     HWND hwnd,
-    const std::wstring& url,
+    const std::wstring &url,
     bool isMp3,
     bool isPlaylist)
 {
@@ -1777,27 +1713,22 @@ void MainWindow::StartDownloadWithParams(
         m_lastIsPlaylist =
             isPlaylist;
 
-
         SendMessageW(
             m_progressBar,
             PBM_SETPOS,
             0,
             0);
 
-
         UpdateProgressText(0);
-
 
         SetWindowTextW(
             m_statusLabel,
             L"Starting download...");
 
-
         SetDownloadingState(
             true);
     }
 }
-
 
 // ============================================================
 // CANCEL
@@ -1808,13 +1739,10 @@ void MainWindow::OnCancelClicked()
     if (m_cancelPending)
         return;
 
-
     m_cancelPending =
         true;
 
-
     DownloadManager::CancelDownload();
-
 
     EnableWindow(
         m_cancelButton,
@@ -1824,12 +1752,10 @@ void MainWindow::OnCancelClicked()
         m_pauseButton,
         FALSE);
 
-
     SetWindowTextW(
         m_statusLabel,
         L"Cancelling...");
 }
-
 
 // ============================================================
 // PAUSE / RESUME
