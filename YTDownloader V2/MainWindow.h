@@ -6,7 +6,6 @@
 class MainWindow
 {
 public:
-
     bool Create(
         HINSTANCE hInstance,
         int nCmdShow,
@@ -22,12 +21,10 @@ public:
         return m_hInstance;
     }
 
-
 private:
-
-    // --------------------------------------------------------
-    // WINDOW
-    // --------------------------------------------------------
+    // ------------------------------------------------------------
+    // Window
+    // ------------------------------------------------------------
 
     static LRESULT CALLBACK WindowProcStatic(
         HWND hwnd,
@@ -41,13 +38,11 @@ private:
         WPARAM wParam,
         LPARAM lParam);
 
+    // ------------------------------------------------------------
+    // UI creation / drawing
+    // ------------------------------------------------------------
 
-    // --------------------------------------------------------
-    // UI
-    // --------------------------------------------------------
-
-    void CreateControls(
-        HWND hwnd);
+    void CreateControls(HWND hwnd);
 
     void ApplyControlFonts();
 
@@ -65,21 +60,15 @@ private:
     void DrawOwnerButton(
         const DRAWITEMSTRUCT* dis);
 
+    // ------------------------------------------------------------
+    // Download actions
+    // ------------------------------------------------------------
 
-    // --------------------------------------------------------
-    // DOWNLOAD ACTIONS
-    // --------------------------------------------------------
-
-    void OnDownloadClicked(
-        HWND hwnd);
+    void OnDownloadClicked(HWND hwnd);
 
     void OnCancelClicked();
 
-    void OnPauseResumeClicked(
-        HWND hwnd);
-
-    void SetDownloadingState(
-        bool downloading);
+    void OnPauseResumeClicked(HWND hwnd);
 
     void StartDownloadWithParams(
         HWND hwnd,
@@ -91,99 +80,63 @@ private:
         HWND hwnd,
         const std::wstring& url);
 
+    // ------------------------------------------------------------
+    // State
+    // ------------------------------------------------------------
 
-    // --------------------------------------------------------
-    // FORMAT / PROGRESS
-    // --------------------------------------------------------
+    void SetDownloadingState(bool downloading);
 
-    void SetFormatSelection(
-        bool mp3);
+    void SetFormatSelection(bool mp3);
 
-    void UpdateProgressText(
-        int progress);
+    void UpdateProgressText(int progress);
 
+    // ------------------------------------------------------------
+    // Window / instance
+    // ------------------------------------------------------------
 
-    // --------------------------------------------------------
-    // WINDOW HANDLES
-    // --------------------------------------------------------
+    HWND m_hwnd = nullptr;
+    HINSTANCE m_hInstance = nullptr;
 
-    HWND m_hwnd =
-        nullptr;
+    // ------------------------------------------------------------
+    // Controls
+    // ------------------------------------------------------------
 
-    HINSTANCE m_hInstance =
-        nullptr;
+    HWND m_urlEdit = nullptr;
 
-    HWND m_urlEdit =
-        nullptr;
+    HWND m_downloadButton = nullptr;
+    HWND m_pauseButton = nullptr;
+    HWND m_cancelButton = nullptr;
 
-    HWND m_downloadButton =
-        nullptr;
+    HWND m_progressBar = nullptr;
 
-    HWND m_cancelButton =
-        nullptr;
+    HWND m_statusCaption = nullptr;
+    HWND m_statusLabel = nullptr;
+    HWND m_progressPercent = nullptr;
 
-    HWND m_pauseButton =
-        nullptr;
+    HWND m_mp4Button = nullptr;
+    HWND m_mp3Button = nullptr;
 
-    HWND m_progressBar =
-        nullptr;
+    // ------------------------------------------------------------
+    // Fonts
+    // ------------------------------------------------------------
 
-    HWND m_statusLabel =
-        nullptr;
+    HFONT m_titleFont = nullptr;
+    HFONT m_sectionFont = nullptr;
+    HFONT m_bodyFont = nullptr;
+    HFONT m_smallFont = nullptr;
+    HFONT m_buttonFont = nullptr;
 
-    HWND m_progressPercent =
-        nullptr;
+    // ------------------------------------------------------------
+    // Download state
+    // ------------------------------------------------------------
 
-    HWND m_mp4Button =
-        nullptr;
-
-    HWND m_mp3Button =
-        nullptr;
-
-    HWND m_statusCaption =
-        nullptr;
-
-
-    // --------------------------------------------------------
-    // FONTS
-    // --------------------------------------------------------
-
-    HFONT m_titleFont =
-        nullptr;
-
-    HFONT m_sectionFont =
-        nullptr;
-
-    HFONT m_bodyFont =
-        nullptr;
-
-    HFONT m_smallFont =
-        nullptr;
-
-    HFONT m_buttonFont =
-        nullptr;
-
-
-    // --------------------------------------------------------
-    // DOWNLOAD STATE
-    // --------------------------------------------------------
-
-    bool m_isPaused =
-        false;
-
-    bool m_selectedMp3 =
-        false;
-
-    bool m_cancelPending =
-        false;
+    bool m_isPaused = false;
+    bool m_selectedMp3 = false;
+    bool m_cancelPending = false;
 
     std::wstring m_lastStatusText;
 
     std::wstring m_lastUrl;
-
-    bool m_lastIsMp3 =
-        false;
-
-    bool m_lastIsPlaylist =
-        false;
+    bool m_lastIsMp3 = false;
+    bool m_lastIsPlaylist = false;
 };

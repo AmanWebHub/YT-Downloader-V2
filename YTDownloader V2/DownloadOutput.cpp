@@ -205,12 +205,28 @@ namespace DownloadOutput
             line,
             progress))
         {
-            PostMessageW(
-                ownerWindow,
-                WM_APP_DOWNLOAD_PROGRESS,
-                static_cast<WPARAM>(
-                    progress),
-                0);
+            // yt-dlp (run with --newline) can emit a fresh progress
+            // line many times per second, and TryParseProgress
+            // truncates to an int, so most of those lines repeat the
+            // same whole-number percentage. Posting a UI update for
+            // every single one floods the message queue and forces
+            // far more repaints of the percentage label than the
+            // visible number ever actually changes, which is what
+            // produced the overlapping/ghosted digits during an
+            // active download. Only post when the value changes.
+            static thread_local int s_lastPostedProgress = -1;
+
+            if (progress != s_lastPostedProgress)
+            {
+                s_lastPostedProgress = progress;
+
+                PostMessageW(
+                    ownerWindow,
+                    WM_APP_DOWNLOAD_PROGRESS,
+                    static_cast<WPARAM>(
+                        progress),
+                    0);
+            }
         }
 
         // ---------------------------------------------------------
