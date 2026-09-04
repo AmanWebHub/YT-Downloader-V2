@@ -934,13 +934,18 @@ void CompletionWindow::OnOpenFolderClicked()
     if (m_isPlaylist ||
         m_isFolderOnly)
     {
-        // For playlists, the MainWindow should pass the
-        // downloads folder. This opens that folder directly.
+        // Launch explorer.exe on the folder explicitly, rather than
+        // relying on ShellExecuteW("open", m_filePath) which only
+        // opens a folder correctly if m_filePath genuinely IS a
+        // folder. That assumption isn't guaranteed here (it doesn't
+        // hold if this window is ever handed a specific file while
+        // m_isFolderOnly/m_isPlaylist is set), so open it the same
+        // explicit, reliable way as the non-playlist path below.
         ShellExecuteW(
             m_hwnd,
             L"open",
-            m_filePath.c_str(),
-            nullptr,
+            L"explorer.exe",
+            (L"\"" + m_filePath + L"\"").c_str(),
             nullptr,
             SW_SHOWNORMAL);
 

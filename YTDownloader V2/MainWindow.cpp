@@ -509,9 +509,16 @@ case WM_APP_DOWNLOAD_FINISHED:
             CompletionWindow::Create(
                 m_hInstance,
                 m_hwnd,
-                filePath.empty()
+                // For a playlist, the completion window only offers
+                // "Open Folder" (see CompletionWindow::CreateControls),
+                // so it should always get the folder - never a
+                // specific file, even now that resolvedFilePath
+                // reliably resolves to the last item downloaded.
+                m_lastIsPlaylist
                     ? folder
-                    : filePath,
+                    : (filePath.empty()
+                        ? folder
+                        : filePath),
                 m_lastIsPlaylist);
         }
         else
