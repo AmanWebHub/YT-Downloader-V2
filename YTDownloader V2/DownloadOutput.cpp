@@ -3,6 +3,7 @@
 #include "DownloadUtils.h"
 
 #include <algorithm>
+#include <cwchar>
 
 namespace
 {
@@ -227,6 +228,49 @@ namespace DownloadOutput
                         progress),
                     0);
             }
+        }
+
+        // ---------------------------------------------------------
+        // Authoritative final file path.
+        //
+        // Printed via "--print after_move:__ITD_FILE__:%(filepath)s",
+        // which yt-dlp fires only once all post-processing (stream
+        // merging, audio extraction, thumbnail/metadata embedding,
+        // and any resulting rename) is fully done. This is the only
+        // signal that reliably reflects what's actually on disk, so
+        // it takes priority over the "[download] Destination:" /
+        // "[Merger] Merging formats into" guesses below, which only
+        // ever see intermediate, pre-processing filenames.
+        // ---------------------------------------------------------
+        std::wstring finalPath;
+
+        if (TryGetDestination(
+            line,
+            L"__ITD_FILE__:",
+            finalPath))
+        {
+            // yt-dlp has known cases (even at after_move/after_video)
+            // where the requested field isn't available yet and it
+            // prints the literal string "NA" instead of a real path.
+            // Silently accepting that would stomp a perfectly good
+            // filename already captured from an earlier line, so only
+            // trust this marker when it looks like an actual path.
+            const bool looksLikeRealPath =
+                _wcsicmp(
+                    finalPath.c_str(),
+                    L"NA") != 0 &&
+                finalPath.find(L'.') !=
+                    std::wstring::npos;
+
+            if (looksLikeRealPath)
+            {
+                TrackDestination(
+                    finalPath,
+                    trackedDestinations,
+                    finalFileName);
+            }
+
+            return;
         }
 
         // ---------------------------------------------------------

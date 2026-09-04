@@ -367,7 +367,8 @@ namespace DownloadUtils
 
     std::wstring FindNewestFileSince(
         const std::wstring& folder,
-        const FILETIME& downloadStart)
+        const FILETIME& downloadStart,
+        const std::wstring& excludePath)
     {
         const std::wstring searchPattern =
             folder + L"\\*";
@@ -395,7 +396,8 @@ namespace DownloadUtils
             L".webp",
             L".description",
             L".json",
-            L".temp"
+            L".temp",
+            L".tmp"
         };
 
         do
@@ -408,6 +410,30 @@ namespace DownloadUtils
 
             const std::wstring name =
                 findData.cFileName;
+
+            // Skip dot-prefixed files outright. This app writes its
+            // own internal bookkeeping (e.g. the session manifest)
+            // as a hidden, dot-prefixed file specifically so it's
+            // never mistaken for a downloaded artifact; it gets
+            // rewritten throughout the download, so relying only on
+            // "newest file" would otherwise pick it over the real
+            // output.
+            if (!name.empty() &&
+                name.front() == L'.')
+            {
+                continue;
+            }
+
+            // Belt-and-suspenders: also exclude a specific known
+            // path by exact match, in case a caller knows precisely
+            // which file to rule out regardless of naming.
+            if (!excludePath.empty() &&
+                _wcsicmp(
+                    (folder + L"\\" + name).c_str(),
+                    excludePath.c_str()) == 0)
+            {
+                continue;
+            }
 
             const size_t dotPos =
                 name.find_last_of(L'.');
