@@ -1,76 +1,81 @@
-# Test Log
+# YTDownloader V2 — Test Log
 
-## August 22, 2026 — Core Download Control Testing
+**Version:** V2 — Development/Stabilization Build  
+**Log Date:** September 4, 2026  
+**Overall Test Status:** ✅ PASS
 
-### Test Environment
+## Core Download Tests
 
-* Project: **IT Downloader V2**
-* Component tested: `DownloadManager`
-* Downloader engine: `yt-dlp`
-* Process management: Windows Job Object
-* Test focus: Core download control functionality
-* UI changes: Not part of this test cycle
+| Test | Result |
+|---|---|
+| Single MP3 download | ✅ PASS |
+| Single MP4/video download | ✅ PASS |
+| Single video selected from playlist | ✅ PASS |
+| Entire playlist — MP3 | ✅ PASS |
+| Entire playlist — MP4/video | ✅ PASS |
 
-### Results
+## Pause / Resume / Cancellation
 
-| Test                      | Expected Result                                      | Result |
-| ------------------------- | ---------------------------------------------------- | ------ |
-| MP4 single-video download | Download completes successfully                      | PASS   |
-| MP3 single-video download | Audio download/conversion completes successfully     | PASS   |
-| Playlist download         | Playlist items download successfully                 | PASS   |
-| Pause                     | yt-dlp process stops and `.part` file remains        | PASS   |
-| Resume                    | Paused download continues from existing partial file | PASS   |
-| Cancel                    | yt-dlp/FFmpeg processes terminate                    | PASS   |
-| Cancel cleanup            | Cancelled download's temporary files are removed     | PASS   |
-| Cancel error handling     | No misleading error-code `1` popup is displayed      | PASS   |
-| Pause state               | Download remains resumable                           | PASS   |
-| Playlist cancellation     | Partial playlist files are cleaned up                | PASS   |
+| Test | Result |
+|---|---|
+| Pause and Resume | ✅ PASS |
+| Immediate Pause | ✅ PASS |
+| Pause after download delay/progress | ✅ PASS |
+| Immediate Cancel | ✅ PASS |
+| Cancel after download has progressed | ✅ PASS |
+| Playlist Resume | ✅ PASS |
+| Playlist resume retains original download mode | ✅ PASS |
 
-### Pause/Resume Verification
+## Completion Window
 
-A download was paused during an active transfer.
+| Test | Result |
+|---|---|
+| MP3 completion window | ✅ PASS |
+| MP4/video completion window | ✅ PASS |
+| Open downloaded file | ✅ PASS |
+| Open With | ✅ PASS |
+| Open Folder for single download | ✅ PASS |
+| Open Folder for playlist | ✅ PASS |
 
-**Observed:**
+## Filename / Output Handling
 
-* yt-dlp stopped.
-* The partial `.part` file remained.
-* The application entered the paused state.
-* Resume restarted the download using the existing partial file.
-* The download continued successfully.
+| Test | Result |
+|---|---|
+| Special-character titles | ✅ PASS |
+| Final output-file resolution after post-processing | ✅ PASS |
+| UTF-8/special-character handling | ✅ PASS |
+| Filesystem-based output fallback | ✅ PASS |
+| Temporary/session-file exclusion | ✅ PASS |
 
-**Result: PASS**
+## UI / Rendering
 
-### Cancel Verification
+| Test | Result |
+|---|---|
+| Download status text rendering | ✅ PASS |
+| Progress percentage rendering | ✅ PASS |
+| No status-text overlap/ghosting during downloads | ✅ PASS |
+| Progress update de-duplication | ✅ PASS |
 
-A separate download was cancelled during an active transfer.
+## Cleanup / Artifact Handling
 
-**Observed:**
+| Test | Result |
+|---|---|
+| Temporary download artifacts are tracked/handled | ✅ PASS |
+| Session manifest is not mistaken for downloaded output | ✅ PASS |
+| MP3 post-processing/output handling | ✅ PASS |
 
-* yt-dlp and its child process were terminated.
-* The partial `.part` file was removed.
-* The application reported `Download cancelled.`
-* No erroneous yt-dlp error-code popup appeared.
-* The application returned to its normal ready state.
+## Final Assessment
 
-**Result: PASS**
+**Core downloader functionality is stable and passed the completed test cycle.**
 
-### Playlist Verification
+### Current Development Phase
 
-Playlist downloads were tested with the updated process-control and cleanup implementation.
+**Core Functionality Complete / UI Refinement Phase**
 
-**Observed:**
+### Next Planned Improvement
 
-* Playlist downloads completed successfully.
-* Multiple partial files can be handled during cancellation.
-* Cancellation cleanup does not intentionally remove completed files.
+Replace the current playlist prompt with a dedicated custom playlist-choice interface offering:
 
-**Result: PASS**
-
-### Current Status
-
-**STABLE CORE FUNCTIONALITY**
-
-The tested download-control functionality is considered stable enough to commit to the repository.
-
-The next planned work is **code cleanup/refactoring**, with particular attention to `DownloadManager.cpp`. No additional feature development should be performed until the refactoring pass has been completed and retested.
-#
+- **This Video**
+- **Entire Playlist**
+- **Cancel**
