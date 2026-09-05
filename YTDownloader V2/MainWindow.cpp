@@ -2,6 +2,7 @@
 #include "resource.h"
 #include "DownloadManager.h"
 #include "CompletionWindow.h"
+#include "PlaylistChoiceWindow.h"
 #include "DownloadLogger.h"
 
 #include <commctrl.h>
@@ -1438,24 +1439,13 @@ if (!hasList)
 if (!hasVideo)
     return 1;
 
-int result =
-    MessageBoxW(
+const PlaylistChoiceWindow::Choice choice =
+    PlaylistChoiceWindow::Show(
+        m_hInstance,
         hwnd,
-        L"This URL contains a playlist.\n\n"
-        L"What would you like to download?\n\n"
-        L"Yes  — Entire playlist\n"
-        L"No   — This video only",
-        L"Playlist detected",
-        MB_YESNOCANCEL |
-        MB_ICONQUESTION);
+        url);
 
-if (result == IDYES)
-    return 1;
-
-if (result == IDNO)
-    return 0;
-
-return -1;
+return static_cast<int>(choice);
 
 }
 
