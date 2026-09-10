@@ -100,3 +100,5 @@ The goal is to replace the current basic prompt with a polished custom interface
 The project is currently moving from **core functionality development** into **UI refinement and polish**.
 
 The download engine should remain stable while UI improvements are developed and tested independently.
+
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
