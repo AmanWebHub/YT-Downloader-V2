@@ -3,6 +3,7 @@
 #include "DownloadUtils.h"
 
 #include <algorithm>
+#include <cwchar>
 
 namespace
 {
@@ -205,12 +206,71 @@ namespace DownloadOutput
             line,
             progress))
         {
-            PostMessageW(
-                ownerWindow,
-                WM_APP_DOWNLOAD_PROGRESS,
-                static_cast<WPARAM>(
-                    progress),
-                0);
+            // yt-dlp (run with --newline) can emit a fresh progress
+            // line many times per second, and TryParseProgress
+            // truncates to an int, so most of those lines repeat the
+            // same whole-number percentage. Posting a UI update for
+            // every single one floods the message queue and forces
+            // far more repaints of the percentage label than the
+            // visible number ever actually changes, which is what
+            // produced the overlapping/ghosted digits during an
+            // active download. Only post when the value changes.
+            static thread_local int s_lastPostedProgress = -1;
+
+            if (progress != s_lastPostedProgress)
+            {
+                s_lastPostedProgress = progress;
+
+                PostMessageW(
+                    ownerWindow,
+                    WM_APP_DOWNLOAD_PROGRESS,
+                    static_cast<WPARAM>(
+                        progress),
+                    0);
+            }
+        }
+
+        // ---------------------------------------------------------
+        // Authoritative final file path.
+        //
+        // Printed via "--print after_move:__ITD_FILE__:%(filepath)s",
+        // which yt-dlp fires only once all post-processing (stream
+        // merging, audio extraction, thumbnail/metadata embedding,
+        // and any resulting rename) is fully done. This is the only
+        // signal that reliably reflects what's actually on disk, so
+        // it takes priority over the "[download] Destination:" /
+        // "[Merger] Merging formats into" guesses below, which only
+        // ever see intermediate, pre-processing filenames.
+        // ---------------------------------------------------------
+        std::wstring finalPath;
+
+        if (TryGetDestination(
+            line,
+            L"__ITD_FILE__:",
+            finalPath))
+        {
+            // yt-dlp has known cases (even at after_move/after_video)
+            // where the requested field isn't available yet and it
+            // prints the literal string "NA" instead of a real path.
+            // Silently accepting that would stomp a perfectly good
+            // filename already captured from an earlier line, so only
+            // trust this marker when it looks like an actual path.
+            const bool looksLikeRealPath =
+                _wcsicmp(
+                    finalPath.c_str(),
+                    L"NA") != 0 &&
+                finalPath.find(L'.') !=
+                    std::wstring::npos;
+
+            if (looksLikeRealPath)
+            {
+                TrackDestination(
+                    finalPath,
+                    trackedDestinations,
+                    finalFileName);
+            }
+
+            return;
         }
 
         // ---------------------------------------------------------

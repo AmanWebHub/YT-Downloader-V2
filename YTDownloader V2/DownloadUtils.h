@@ -19,7 +19,8 @@ namespace DownloadUtils
 
     std::wstring FindNewestFileSince(
         const std::wstring& folder,
-        const FILETIME& downloadStart);
+        const FILETIME& downloadStart,
+        const std::wstring& excludePath = L"");
 
     bool FileExists(
         const std::wstring& path);

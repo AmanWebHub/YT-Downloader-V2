@@ -1271,7 +1271,7 @@ namespace
         std::wstring commandLine =
             L"\"" + ytDlpPath + L"\" "
             L"--newline "
-            L"--print before_dl:__ITD_FILE__:%(filepath)s "
+            L"--print after_move:__ITD_FILE__:%(filepath)s "
             L"--no-quiet ";
 
         if (isMp3)
@@ -1330,6 +1330,83 @@ namespace
         DownloadState::stopRequested = false;
         DownloadState::pauseRequested = false;
         DownloadState::downloadRunning = false;
+    }
+
+    // yt-dlp's bundled Python runtime picks its stdout/stderr text
+    // encoding based on the environment it inherits. When stdout is
+    // redirected to a pipe (as it is here, not a real console), that
+    // choice is locale-dependent and on many Windows setups is NOT
+    // UTF-8 - even though everything downstream in this app
+    // (ReadOutputLine's MultiByteToWideChar(CP_UTF8, ...)) assumes it
+    // is. Any video title containing a character yt-dlp has to
+    // substitute for filename-safety then gets misread here, and the
+    // wide filename we reconstruct silently diverges - byte for byte
+    // - from the real file on disk, even though it looks identical or
+    // near-identical when printed back out. That's what makes
+    // GetFileAttributesW report "doesn't exist" for a file that does.
+    //
+    // Setting PYTHONUTF8=1 forces Python's UTF-8 mode (PEP 540)
+    // regardless of the system locale/codepage, so the bytes we
+    // receive are guaranteed to actually be UTF-8, matching what we
+    // already assume when decoding.
+    std::vector<wchar_t> BuildChildEnvironmentWithUtf8()
+    {
+        LPWCH parentEnv =
+            GetEnvironmentStringsW();
+
+        std::vector<wchar_t> block;
+
+        if (parentEnv)
+        {
+            const wchar_t* p = parentEnv;
+
+            while (*p)
+            {
+                const size_t len =
+                    wcslen(p);
+
+                // Skip any pre-existing PYTHONUTF8 /
+                // PYTHONIOENCODING entries so ours are authoritative
+                // and we don't end up with duplicate keys.
+                if (_wcsnicmp(p, L"PYTHONUTF8=", 11) != 0 &&
+                    _wcsnicmp(p, L"PYTHONIOENCODING=", 17) != 0)
+                {
+                    block.insert(
+                        block.end(),
+                        p,
+                        p + len + 1);
+                }
+
+                p += len + 1;
+            }
+
+            FreeEnvironmentStringsW(parentEnv);
+        }
+
+        const std::wstring utf8Mode =
+            L"PYTHONUTF8=1";
+
+        block.insert(
+            block.end(),
+            utf8Mode.begin(),
+            utf8Mode.end());
+
+        block.push_back(L'\0');
+
+        const std::wstring ioEncoding =
+            L"PYTHONIOENCODING=utf-8";
+
+        block.insert(
+            block.end(),
+            ioEncoding.begin(),
+            ioEncoding.end());
+
+        block.push_back(L'\0');
+
+        // Double null terminator marks the end of the block.
+        block.push_back(L'\0');
+
+        return block;
     }
 }
 
@@ -1448,6 +1525,9 @@ namespace DownloadWorker
         FILETIME downloadStartTime{};
         GetSystemTimeAsFileTime(&downloadStartTime);
 
+        std::vector<wchar_t> environmentBlock =
+            BuildChildEnvironmentWithUtf8();
+
         const BOOL created =
             CreateProcessW(
                 nullptr,
@@ -1455,8 +1535,9 @@ namespace DownloadWorker
                 nullptr,
                 nullptr,
                 TRUE,
-                CREATE_NO_WINDOW,
-                nullptr,
+                CREATE_NO_WINDOW |
+                CREATE_UNICODE_ENVIRONMENT,
+                environmentBlock.data(),
                 nullptr,
                 &startupInfo,
                 &processInfo);
@@ -1621,6 +1702,13 @@ namespace DownloadWorker
                 break;
             }
 
+            // Diagnostic: log every raw line from yt-dlp so we can see
+            // exactly what it's printing (including the __ITD_FILE__
+            // marker) and how that maps to the file the app resolves.
+            DownloadLogger::Write(
+                L"DownloadWorker",
+                L"RAW OUTPUT: " + line);
+
             const std::wstring destination =
                 ExtractDestinationFromLine(line);
 
@@ -1710,74 +1798,77 @@ namespace DownloadWorker
             {
                 const std::wstring candidate =
                     downloadsFolder + L"\\" + finalFileName;
-                if (GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES)
+
+                const bool candidateExists =
+                    GetFileAttributesW(candidate.c_str()) != INVALID_FILE_ATTRIBUTES;
+
+                DownloadLogger::Write(
+                    L"DownloadWorker",
+                    L"Resolving final file: finalFileName=\"" +
+                    finalFileName +
+                    L"\" candidate=\"" +
+                    candidate +
+                    L"\" exists=" +
+                    (candidateExists ? L"YES" : L"NO"));
+
+                if (candidateExists)
                 {
                     resolvedFilePath = candidate;
                     hasValidFile = true;
                 }
             }
-
-            // If not found, scan for a .mp3 file created since the original start time
-            if (!hasValidFile && isMp3)
+            else
             {
-                // Use FindNewestFileSince but filter for .mp3 extension
-                const std::wstring searchPattern = downloadsFolder + L"\\*";
-                WIN32_FIND_DATAW findData{};
-                HANDLE findHandle = FindFirstFileW(searchPattern.c_str(), &findData);
-                if (findHandle != INVALID_HANDLE_VALUE)
+                DownloadLogger::Write(
+                    L"DownloadWorker",
+                    L"Resolving final file: finalFileName is EMPTY.");
+            }
+
+            // Fall back to scanning the filesystem directly for the
+            // newest real output file created since this download
+            // started. This applies regardless of format (mp3 or
+            // video/mp4): trying to reconstruct the exact filename
+            // from yt-dlp's console text is unreliable whenever the
+            // title contains a character yt-dlp had to substitute
+            // for filename-safety (observed: yt-dlp prints a
+            // fullwidth "｜" in that case, but by the time it comes
+            // through our pipe and gets decoded, that character is
+            // gone). FindFirstFileW/FindNextFileW read the actual
+            // NTFS filename directly as UTF-16, so this sidesteps
+            // that problem entirely rather than trying to out-guess
+            // it - the same approach already proven to work for the
+            // MP3 case below.
+            if (!hasValidFile)
+            {
+                const std::wstring newestFile =
+                    DownloadUtils::FindNewestFileSince(
+                        downloadsFolder,
+                        originalStartTime,
+                        manifestPath);
+
+                DownloadLogger::Write(
+                    L"DownloadWorker",
+                    L"Filesystem fallback scan: newestFile=\"" +
+                    newestFile +
+                    L"\"");
+
+                if (!newestFile.empty())
                 {
-                    ULARGE_INTEGER startTimeValue{};
-                    startTimeValue.LowPart = originalStartTime.dwLowDateTime;
-                    startTimeValue.HighPart = originalStartTime.dwHighDateTime;
+                    resolvedFilePath = newestFile;
+                    hasValidFile = true;
 
-                    std::wstring bestPath;
-                    ULARGE_INTEGER bestTime{};
-                    bestTime.QuadPart = 0;
+                    const size_t slash =
+                        newestFile.find_last_of(L"\\/");
 
-                    do
-                    {
-                        if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-                            continue;
-
-                        const std::wstring name = findData.cFileName;
-                        const size_t dot = name.find_last_of(L'.');
-                        if (dot == std::wstring::npos)
-                            continue;
-                        if (_wcsicmp(name.substr(dot).c_str(), L".mp3") != 0)
-                            continue;
-
-                        ULARGE_INTEGER fileTime{};
-                        fileTime.LowPart = findData.ftLastWriteTime.dwLowDateTime;
-                        fileTime.HighPart = findData.ftLastWriteTime.dwHighDateTime;
-
-                        // Must be created after the start (with 2s tolerance)
-                        if (fileTime.QuadPart + 20000000ULL < startTimeValue.QuadPart)
-                            continue;
-
-                        if (fileTime.QuadPart > bestTime.QuadPart)
-                        {
-                            bestTime = fileTime;
-                            bestPath = downloadsFolder + L"\\" + name;
-                        }
-                    } while (FindNextFileW(findHandle, &findData));
-                    FindClose(findHandle);
-
-                    if (!bestPath.empty() && DownloadUtils::FileExists(bestPath))
-                    {
-                        resolvedFilePath = bestPath;
-                        hasValidFile = true;
-                        // Also update finalFileName for cleanup
-                        if (finalFileName.empty())
-                        {
-                            const size_t slash = bestPath.find_last_of(L"\\/");
-                            finalFileName = (slash != std::wstring::npos) ? bestPath.substr(slash + 1) : bestPath;
-                        }
-                    }
+                    finalFileName =
+                        (slash != std::wstring::npos)
+                        ? newestFile.substr(slash + 1)
+                        : newestFile;
                 }
             }
 
             // Now decide what to do
-            if (exitCode == 0 || (isMp3 && hasValidFile))
+            if (exitCode == 0 || hasValidFile)
             {
                 // Success path
                 PostMessageW(
@@ -1841,6 +1932,15 @@ namespace DownloadWorker
                 resolvedFilePath.clear();
             }
         }
+
+        DownloadLogger::Write(
+            L"DownloadWorker",
+            L"FINAL DECISION: resolvedFilePath=\"" +
+            resolvedFilePath +
+            L"\" downloadsFolder=\"" +
+            downloadsFolder +
+            L"\" (CompletionWindow will use resolvedFilePath if " +
+            L"non-empty, otherwise it falls back to downloadsFolder)");
 
         DownloadOutput::PostFinished(
             ownerWindow,

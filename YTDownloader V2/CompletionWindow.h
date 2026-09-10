@@ -3,26 +3,51 @@
 #include <windows.h>
 #include <string>
 
-// Self-owned: created with `new`, deletes itself once its HWND is
-// destroyed. Shows the downloaded file's path with Open File / Open
-// With / Open Folder / Close buttons. Hides the owner window while
-// visible, and re-shows it when Close is clicked.
 class CompletionWindow
 {
 public:
-    static CompletionWindow* Create(HINSTANCE hInstance, HWND ownerToRestore, const std::wstring& filePath);
+    static CompletionWindow* Create(
+        HINSTANCE hInstance,
+        HWND ownerToRestore,
+        const std::wstring& filePath,
+        bool isPlaylist);
 
 private:
-    static LRESULT CALLBACK WindowProcStatic(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-    LRESULT HandleMessage(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK WindowProcStatic(
+        HWND hwnd,
+        UINT uMsg,
+        WPARAM wParam,
+        LPARAM lParam);
+
+    LRESULT HandleMessage(
+        HWND hwnd,
+        UINT uMsg,
+        WPARAM wParam,
+        LPARAM lParam);
 
     void CreateControls(HWND hwnd);
-    void OnOpenFileClicked();
+    void PaintBackground(HDC hdc, const RECT& rc);
+    void DrawOwnerButton(const DRAWITEMSTRUCT* dis);
+
+    void OnOpenClicked();
     void OnOpenWithClicked();
     void OnOpenFolderClicked();
 
     HWND m_hwnd = nullptr;
     HWND m_ownerToRestore = nullptr;
+    HWND m_pathLabel = nullptr;
+    HWND m_statusLabel = nullptr;
+
+    HFONT m_titleFont = nullptr;
+    HFONT m_bodyFont = nullptr;
+    HFONT m_smallFont = nullptr;
+    HFONT m_buttonFont = nullptr;
+
     std::wstring m_filePath;
-    bool m_isFolderOnly = false; // true if we only know the folder, not the exact file
+
+    // True when the completed operation was a playlist download.
+    bool m_isPlaylist = false;
+
+    // True when the supplied path itself is a folder.
+    bool m_isFolderOnly = false;
 };

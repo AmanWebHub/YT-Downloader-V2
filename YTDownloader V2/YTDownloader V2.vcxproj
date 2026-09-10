@@ -28,6 +28,7 @@
     <ClCompile Include="DownloadWorker.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp" />
+    <ClCompile Include="PlaylistChoiceWindow.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CompletionWindow.h" />
@@ -38,6 +39,7 @@
     <ClInclude Include="DownloadUtils.h" />
     <ClInclude Include="DownloadWorker.h" />
     <ClInclude Include="MainWindow.h" />
+    <ClInclude Include="PlaylistChoiceWindow.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">

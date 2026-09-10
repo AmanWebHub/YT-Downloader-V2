@@ -30,7 +30,7 @@ namespace DownloadManager
             MessageBoxW(
                 ownerWindow,
                 L"Please enter a video URL.",
-                L"IT Downloader V2",
+                L"YT Downloader V2",
                 MB_OK | MB_ICONWARNING);
 
             return false;
@@ -45,7 +45,7 @@ namespace DownloadManager
             MessageBoxW(
                 ownerWindow,
                 L"A download is already running.",
-                L"IT Downloader V2",
+                L"YT Downloader V2",
                 MB_OK | MB_ICONWARNING);
 
             return false;
@@ -84,7 +84,7 @@ namespace DownloadManager
             MessageBoxW(
                 ownerWindow,
                 message.c_str(),
-                L"IT Downloader V2",
+                L"YT Downloader V2",
                 MB_OK | MB_ICONERROR);
 
             return false;
@@ -112,7 +112,7 @@ namespace DownloadManager
             MessageBoxW(
                 ownerWindow,
                 errorMessage.c_str(),
-                L"IT Downloader V2",
+                L"YT Downloader V2",
                 MB_OK | MB_ICONERROR);
 
             return false;
