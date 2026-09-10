@@ -923,7 +923,7 @@ void CompletionWindow::OnOpenWithClicked()
         MessageBoxW(
             m_hwnd,
             L"Could not open the Open With dialog.",
-            L"IT Downloader V2",
+            L"YT Downloader V2",
             MB_OK |
             MB_ICONERROR);
     }

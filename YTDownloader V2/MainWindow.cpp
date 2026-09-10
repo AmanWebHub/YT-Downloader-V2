@@ -17,8 +17,8 @@ namespace
 {
 const wchar_t CLASS_NAME[] = L"ITDownloaderV2Window";
 
-constexpr COLORREF CLR_BG        = RGB(248, 248, 248);
-constexpr COLORREF CLR_SURFACE   = RGB(255, 255, 255);
+constexpr COLORREF CLR_BG        = RGB(245, 246, 248);
+constexpr COLORREF CLR_SURFACE   = RGB(245, 246, 248);
 constexpr COLORREF CLR_TEXT      = RGB(24, 24, 24);
 constexpr COLORREF CLR_MUTED     = RGB(105, 105, 105);
 constexpr COLORREF CLR_BORDER    = RGB(220, 220, 220);
@@ -81,7 +81,7 @@ if (!registered)
 m_hwnd = CreateWindowExW(
     0,
     CLASS_NAME,
-    L"IT Downloader V2",
+    L"YT Downloader V2",
     WS_OVERLAPPED |
     WS_CAPTION |
     WS_SYSMENU |
@@ -101,7 +101,7 @@ if (!m_hwnd)
     MessageBoxW(
         nullptr,
         L"Failed to create the main window.",
-        L"IT Downloader V2",
+        L"YT Downloader V2",
         MB_OK | MB_ICONERROR);
 
     return false;
@@ -284,11 +284,47 @@ case WM_CTLCOLORSTATIC:
             percentBrush);
     }
 
-    SetBkMode(hdc, TRANSPARENT);
+    // A disabled Edit control is colored via WM_CTLCOLORSTATIC
+    // (not WM_CTLCOLOREDIT), which only fires while enabled.
+    // Without this case, m_urlEdit fell through to the generic
+    // label branch below and picked up an uninitialized
+    // GWLP_USERDATA background color of 0 (black) whenever the
+    // field was disabled during a download.
+    if (control == m_urlEdit)
+    {
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, CLR_SURFACE);
+        SetTextColor(hdc, CLR_DISABLED);
+
+        static HBRUSH urlDisabledBrush =
+            CreateSolidBrush(CLR_SURFACE);
+
+        return reinterpret_cast<LRESULT>(
+            urlDisabledBrush);
+    }
+
+    // Every other static label carries its intended background
+    // color, stashed on itself at creation time (see makeStatic).
+    // Paint it opaquely with that exact color rather than trying to
+    // stay "transparent" - see makeStatic's comment for why.
+    const COLORREF labelBg =
+        static_cast<COLORREF>(
+            GetWindowLongPtrW(control, GWLP_USERDATA));
+
+    SetBkMode(hdc, OPAQUE);
+    SetBkColor(hdc, labelBg);
     SetTextColor(hdc, CLR_TEXT);
 
+    static HBRUSH backgroundBrush =
+        CreateSolidBrush(CLR_BG);
+
+    static HBRUSH surfaceBrush =
+        CreateSolidBrush(CLR_SURFACE);
+
     return reinterpret_cast<LRESULT>(
-        GetStockObject(NULL_BRUSH));
+        labelBg == CLR_SURFACE
+            ? surfaceBrush
+            : backgroundBrush);
 }
 
 case WM_CTLCOLOREDIT:
@@ -545,7 +581,7 @@ case WM_APP_DOWNLOAD_FINISHED:
                     hwnd,
                     L"The download could not be completed. "
                     L"Please check the URL and try again.",
-                    L"IT Downloader V2",
+                    L"YT Downloader V2",
                     MB_OK | MB_ICONERROR);
             }
         }
@@ -602,7 +638,8 @@ auto makeStatic =
         int y,
         int w,
         int h,
-        HFONT font) -> HWND
+        HFONT font,
+        COLORREF bgColor = CLR_BG) -> HWND
 {
     HWND ctrl =
         CreateWindowW(
@@ -625,6 +662,18 @@ auto makeStatic =
         reinterpret_cast<WPARAM>(font),
         TRUE);
 
+    // Stash this control's real background color on itself, so
+    // WM_CTLCOLORSTATIC can paint it opaquely with the correct shade
+    // instead of relying on a "transparent" NULL_BRUSH - which, now
+    // that WS_CLIPCHILDREN keeps the parent's own background paint
+    // from ever reaching underneath this control, would otherwise
+    // leave a stray blank-white box exactly the size of the control.
+    SetWindowLongPtrW(
+        ctrl,
+        GWLP_USERDATA,
+        static_cast<LONG_PTR>(
+            static_cast<DWORD>(bgColor)));
+
     return ctrl;
 };
 
@@ -632,7 +681,7 @@ auto makeStatic =
 // TITLE
 // ------------------------------------------------------------
 makeStatic(
-    L"IT Downloader V2",
+    L"YT Downloader V2",
     36,
     24,
     400,
@@ -659,7 +708,8 @@ makeStatic(
     96,
     200,
     20,
-    m_sectionFont);
+    m_sectionFont,
+    CLR_SURFACE);
 
 // ------------------------------------------------------------
 // URL EDIT
@@ -700,10 +750,11 @@ SendMessageW(
 makeStatic(
     L"Format",
     36,
-    174,
+    178,
     200,
     20,
-    m_sectionFont);
+    m_sectionFont,
+    CLR_SURFACE);
 
 // ------------------------------------------------------------
 // MP4 FORMAT CARD
@@ -846,7 +897,8 @@ m_statusCaption =
         364,
         60,
         20,
-        m_smallFont);
+        m_smallFont,
+        CLR_SURFACE);
 
 // Status label gets its own STATIC control.
 // The WM_CTLCOLORSTATIC handler above gives this control
@@ -921,7 +973,12 @@ HDC hdc,
 const RECT& clientRect)
 {
 // ------------------------------------------------------------
-// BACKGROUND
+// BACKGROUND - one flat, continuous container rather than
+// separate floating cards. Individual controls (the URL edit,
+// the format option boxes, the buttons) still draw their own
+// borders, so they still read as distinct elements; what's
+// gone is the extra rounded box wrapped around each *group* of
+// controls.
 // ------------------------------------------------------------
 HBRUSH bgBrush =
 CreateSolidBrush(CLR_BG);
@@ -934,61 +991,50 @@ FillRect(
 DeleteObject(bgBrush);
 
 // ------------------------------------------------------------
-// CARDS
+// SECTION DIVIDERS - thin horizontal rules marking the two
+// places the previous card boundaries used to fall, so the
+// page still has clear structure without separate boxes.
 // ------------------------------------------------------------
-const int left = 20;
+const int left = 36;
 const int right =
-    clientRect.right - 20;
+    clientRect.right - 36;
 
-const RECT cards[4] =
+const int dividerYPositions[2] =
 {
-    { left, 86,  right, 166 },
-    { left, 178, right, 268 },
-    { left, 270, right, 334 },
-    { left, 330, right, 392 }
+    88,   // below the subtitle, above the URL field
+    266   // below the format cards, above the button row
 };
 
-HBRUSH surfBrush =
-    CreateSolidBrush(CLR_SURFACE);
-
-HPEN borderPen =
+HPEN dividerPen =
     CreatePen(
         PS_SOLID,
         1,
         CLR_BORDER);
 
-HGDIOBJ oldBrush =
-    SelectObject(
-        hdc,
-        surfBrush);
-
 HGDIOBJ oldPen =
     SelectObject(
         hdc,
-        borderPen);
+        dividerPen);
 
-for (const auto& rc : cards)
+for (int y : dividerYPositions)
 {
-    RoundRect(
+    MoveToEx(
         hdc,
-        rc.left,
-        rc.top,
-        rc.right,
-        rc.bottom,
-        8,
-        8);
+        left,
+        y,
+        nullptr);
+
+    LineTo(
+        hdc,
+        right,
+        y);
 }
 
 SelectObject(
     hdc,
     oldPen);
 
-SelectObject(
-    hdc,
-    oldBrush);
-
-DeleteObject(borderPen);
-DeleteObject(surfBrush);
+DeleteObject(dividerPen);
 
 }
 
@@ -1165,8 +1211,8 @@ if (dis->CtlID == IDC_RADIO_MP4 ||
             ? L"MP3 Audio"
             : L"MP4 Video",
         dis->CtlID == IDC_RADIO_MP3
-            ? L"Audio only • MP3"
-            : L"Video • MP4",
+            ? L"Audio  MP3"
+            : L"Video  MP4",
         selected && !disabled);
 
     return;
@@ -1467,7 +1513,7 @@ if (url.empty())
     MessageBoxW(
         hwnd,
         L"Please enter a video or playlist URL.",
-        L"IT Downloader V2",
+        L"YT Downloader V2",
         MB_OK | MB_ICONINFORMATION);
 
     SetFocus(
