@@ -17,6 +17,15 @@ namespace DownloadUtils
     std::wstring Trim(
         const std::wstring& text);
 
+    // Accepts either a plain URL or a URL wrapped in the app's
+    // "ytdlp://" custom protocol handler (as sent by the browser
+    // extension, e.g. "ytdlp://" + encodeURIComponent(videoUrl)).
+    // Strips the scheme prefix and percent-decodes the remainder.
+    // If the input does not use the ytdlp:// scheme, it is returned
+    // trimmed and otherwise unchanged.
+    std::wstring DecodeExternalUrl(
+        const std::wstring& rawArgument);
+
     std::wstring FindNewestFileSince(
         const std::wstring& folder,
         const FILETIME& downloadStart,

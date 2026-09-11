@@ -1,0 +1,23 @@
+Windows Registry Editor Version 5.00
+
+; Registers the ytdlp:// custom protocol for the current Windows user
+; (no admin rights needed - writes under HKEY_CURRENT_USER, which the
+; shell merges into HKEY_CLASSES_ROOT automatically).
+;
+; Points at the Debug build produced by Visual Studio. If you switch to
+; a Release build, update the two paths below to the x64\Release exe
+; and re-run this file.
+
+[HKEY_CURRENT_USER\Software\Classes\ytdlp]
+@="URL:YTDownloader V2 Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\ytdlp\DefaultIcon]
+@="\"D:\\Projects\\YTDownloader V2\\x64\\Debug\\YTDownloader V2.exe\",0"
+
+[HKEY_CURRENT_USER\Software\Classes\ytdlp\shell]
+
+[HKEY_CURRENT_USER\Software\Classes\ytdlp\shell\open]
+
+[HKEY_CURRENT_USER\Software\Classes\ytdlp\shell\open\command]
+@="\"D:\\Projects\\YTDownloader V2\\x64\\Debug\\YTDownloader V2.exe\" \"%1\""

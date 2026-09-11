@@ -365,6 +365,106 @@ namespace DownloadUtils
             end - start);
     }
 
+    std::wstring DecodeExternalUrl(
+        const std::wstring& rawArgument)
+    {
+        const std::wstring text =
+            Trim(rawArgument);
+
+        const std::wstring prefix = L"ytdlp://";
+
+        const bool hasPrefix =
+            text.size() >= prefix.size() &&
+            _wcsnicmp(
+                text.c_str(),
+                prefix.c_str(),
+                prefix.size()) == 0;
+
+        if (!hasPrefix)
+        {
+            // Not our custom protocol (e.g. a plain URL passed on
+            // the command line, or dragged/typed input) - leave as-is.
+            return text;
+        }
+
+        const std::wstring encoded =
+            text.substr(prefix.size());
+
+        auto hexValue = [](wchar_t c) -> int
+        {
+            if (c >= L'0' && c <= L'9') return c - L'0';
+            if (c >= L'a' && c <= L'f') return 10 + (c - L'a');
+            if (c >= L'A' && c <= L'F') return 10 + (c - L'A');
+            return -1;
+        };
+
+        // encodeURIComponent() produces plain-ASCII, percent-encoded
+        // UTF-8 bytes, so we can rebuild the raw UTF-8 byte sequence
+        // directly from the wide characters here.
+        std::string utf8Bytes;
+        utf8Bytes.reserve(encoded.size());
+
+        for (size_t i = 0; i < encoded.size(); ++i)
+        {
+            const wchar_t ch = encoded[i];
+
+            if (ch == L'%' &&
+                i + 2 < encoded.size())
+            {
+                const int high = hexValue(encoded[i + 1]);
+                const int low = hexValue(encoded[i + 2]);
+
+                if (high >= 0 && low >= 0)
+                {
+                    utf8Bytes.push_back(
+                        static_cast<char>((high << 4) | low));
+
+                    i += 2;
+                    continue;
+                }
+            }
+
+            if (ch <= 0x7F)
+            {
+                utf8Bytes.push_back(
+                    static_cast<char>(ch));
+            }
+        }
+
+        if (utf8Bytes.empty())
+        {
+            return L"";
+        }
+
+        const int wideLength =
+            MultiByteToWideChar(
+                CP_UTF8,
+                0,
+                utf8Bytes.c_str(),
+                static_cast<int>(utf8Bytes.size()),
+                nullptr,
+                0);
+
+        if (wideLength <= 0)
+        {
+            return L"";
+        }
+
+        std::wstring decoded(
+            static_cast<size_t>(wideLength),
+            L'\0');
+
+        MultiByteToWideChar(
+            CP_UTF8,
+            0,
+            utf8Bytes.c_str(),
+            static_cast<int>(utf8Bytes.size()),
+            decoded.data(),
+            wideLength);
+
+        return Trim(decoded);
+    }
+
     std::wstring FindNewestFileSince(
         const std::wstring& folder,
         const FILETIME& downloadStart,

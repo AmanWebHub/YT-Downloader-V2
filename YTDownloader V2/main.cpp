@@ -2,6 +2,7 @@
 #include <shellapi.h>
 #include <string>
 #include "MainWindow.h"
+#include "DownloadUtils.h"
 
 int WINAPI wWinMain(
     _In_ HINSTANCE hInstance,
@@ -19,7 +20,9 @@ int WINAPI wWinMain(
     {
         if (argumentCount > 1)
         {
-            initialUrl = arguments[1];
+            initialUrl =
+                DownloadUtils::DecodeExternalUrl(
+                    arguments[1]);
         }
 
         LocalFree(arguments);
