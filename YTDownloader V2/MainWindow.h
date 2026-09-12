@@ -64,6 +64,14 @@ private:
     // Download actions
     // ------------------------------------------------------------
 
+    // ------------------------------------------------------------
+    // Download location
+    // ------------------------------------------------------------
+
+    void RefreshDownloadFolderDisplay();
+
+    void OnBrowseFolderClicked(HWND hwnd);
+
     void OnDownloadClicked(HWND hwnd);
 
     void OnCancelClicked();
@@ -115,6 +123,9 @@ private:
 
     HWND m_mp4Button = nullptr;
     HWND m_mp3Button = nullptr;
+
+    HWND m_downloadFolderEdit = nullptr;
+    HWND m_browseFolderButton = nullptr;
 
     // ------------------------------------------------------------
     // Fonts

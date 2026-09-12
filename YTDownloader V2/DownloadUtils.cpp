@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <cwctype>
 
+#pragma comment(lib, "advapi32.lib")
+
 namespace
 {
     std::wstring GetExeDirectory()
@@ -286,8 +288,16 @@ namespace DownloadUtils
             L"\\bin\\yt-dlp.exe";
     }
 
-    std::wstring GetDownloadsFolder(
-        bool isMp3)
+    namespace
+    {
+        const wchar_t* const kSettingsKeyPath =
+            L"Software\\YTDownloaderV2";
+
+        const wchar_t* const kDownloadFolderValueName =
+            L"DownloadFolder";
+    }
+
+    std::wstring GetDefaultDownloadBaseFolder()
     {
         wchar_t* userProfile = nullptr;
         size_t len = 0;
@@ -308,10 +318,124 @@ namespace DownloadUtils
             folder = L".";
         }
 
-        return folder +
+        return folder + L"\\Downloads";
+    }
+
+    std::wstring GetCustomDownloadBaseFolder()
+    {
+        HKEY key = nullptr;
+
+        if (RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            kSettingsKeyPath,
+            0,
+            KEY_READ,
+            &key) != ERROR_SUCCESS)
+        {
+            return L"";
+        }
+
+        wchar_t buffer[MAX_PATH]{};
+        DWORD bufferSize = sizeof(buffer);
+        DWORD type = 0;
+
+        const LONG result =
+            RegQueryValueExW(
+                key,
+                kDownloadFolderValueName,
+                nullptr,
+                &type,
+                reinterpret_cast<LPBYTE>(buffer),
+                &bufferSize);
+
+        RegCloseKey(key);
+
+        if (result != ERROR_SUCCESS ||
+            type != REG_SZ)
+        {
+            return L"";
+        }
+
+        return Trim(
+            std::wstring(buffer));
+    }
+
+    bool SetCustomDownloadBaseFolder(
+        const std::wstring& folder)
+    {
+        const std::wstring trimmed =
+            Trim(folder);
+
+        HKEY key = nullptr;
+
+        if (trimmed.empty())
+        {
+            // Clear the override so GetDownloadsFolder() falls back
+            // to the default. Missing key/value is not an error.
+            if (RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                kSettingsKeyPath,
+                0,
+                KEY_SET_VALUE,
+                &key) != ERROR_SUCCESS)
+            {
+                return true;
+            }
+
+            RegDeleteValueW(
+                key,
+                kDownloadFolderValueName);
+
+            RegCloseKey(key);
+            return true;
+        }
+
+        if (RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            kSettingsKeyPath,
+            0,
+            nullptr,
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            nullptr,
+            &key,
+            nullptr) != ERROR_SUCCESS)
+        {
+            return false;
+        }
+
+        const LONG result =
+            RegSetValueExW(
+                key,
+                kDownloadFolderValueName,
+                0,
+                REG_SZ,
+                reinterpret_cast<const BYTE*>(trimmed.c_str()),
+                static_cast<DWORD>(
+                    (trimmed.size() + 1) * sizeof(wchar_t)));
+
+        RegCloseKey(key);
+
+        return result == ERROR_SUCCESS;
+    }
+
+    std::wstring GetActiveDownloadBaseFolder()
+    {
+        const std::wstring custom =
+            GetCustomDownloadBaseFolder();
+
+        return custom.empty()
+            ? GetDefaultDownloadBaseFolder()
+            : custom;
+    }
+
+    std::wstring GetDownloadsFolder(
+        bool isMp3)
+    {
+        return GetActiveDownloadBaseFolder() +
             (isMp3
-                ? L"\\Downloads\\Music"
-                : L"\\Downloads\\Video");
+                ? L"\\Music"
+                : L"\\Video");
     }
 
     bool EnsureFolderExists(
@@ -368,27 +492,71 @@ namespace DownloadUtils
     std::wstring DecodeExternalUrl(
         const std::wstring& rawArgument)
     {
-        const std::wstring text =
+        // Defensive: some browser/OS combinations have been observed
+        // to prepend a stray "/" onto the activated protocol string.
+        // A legitimate "ytdlp:" or "ytdlp://" argument never starts
+        // with "/", so it's always safe to strip leading slashes
+        // before looking for our scheme prefix.
+        std::wstring text =
             Trim(rawArgument);
 
-        const std::wstring prefix = L"ytdlp://";
+        while (!text.empty() &&
+            text.front() == L'/')
+        {
+            text.erase(
+                text.begin());
+        }
 
-        const bool hasPrefix =
-            text.size() >= prefix.size() &&
-            _wcsnicmp(
-                text.c_str(),
-                prefix.c_str(),
-                prefix.size()) == 0;
+        // Recognize both the current opaque form ("ytdlp:...") and
+        // the older hierarchical form ("ytdlp://...") for backwards
+        // compatibility with any extension build still using it.
+        // Checked longest-first so "ytdlp://" isn't misread as
+        // "ytdlp:" plus a leftover "//".
+        static const wchar_t* const kPrefixes[] =
+        {
+            L"ytdlp://",
+            L"ytdlp:",
+        };
 
-        if (!hasPrefix)
+        const wchar_t* matchedPrefix = nullptr;
+
+        for (const wchar_t* candidate : kPrefixes)
+        {
+            const size_t candidateLen =
+                wcslen(candidate);
+
+            if (text.size() >= candidateLen &&
+                _wcsnicmp(
+                    text.c_str(),
+                    candidate,
+                    candidateLen) == 0)
+            {
+                matchedPrefix = candidate;
+                break;
+            }
+        }
+
+        if (!matchedPrefix)
         {
             // Not our custom protocol (e.g. a plain URL passed on
             // the command line, or dragged/typed input) - leave as-is.
             return text;
         }
 
-        const std::wstring encoded =
-            text.substr(prefix.size());
+        std::wstring encoded =
+            text.substr(
+                wcslen(matchedPrefix));
+
+        // Defensive: strip a stray trailing "/" some browsers add
+        // when canonicalizing the hierarchical "ytdlp://" form (see
+        // the comment in the extension's content.js). Our own
+        // encodeURIComponent() output never contains a raw "/", so
+        // any trailing one here is browser-added noise, not data.
+        while (!encoded.empty() &&
+            encoded.back() == L'/')
+        {
+            encoded.pop_back();
+        }
 
         auto hexValue = [](wchar_t c) -> int
         {

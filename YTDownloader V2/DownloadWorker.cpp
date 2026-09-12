@@ -1272,7 +1272,15 @@ namespace
             L"\"" + ytDlpPath + L"\" "
             L"--newline "
             L"--print after_move:__ITD_FILE__:%(filepath)s "
-            L"--no-quiet ";
+            L"--no-quiet "
+            // Bounds any single network operation (including format
+            // resolution/testing) so a stalled request fails with a
+            // clear error instead of hanging the download indefinitely
+            // - e.g. when a format needs a JS-runtime-dependent check
+            // (see yt-dlp's EJS requirement) and none is installed.
+            L"--socket-timeout 30 "
+            L"--retries 5 "
+            L"--extractor-retries 3 ";
 
         if (isMp3)
         {
@@ -1507,6 +1515,11 @@ namespace DownloadWorker
                 isMp3,
                 isPlaylist,
                 downloadsFolder);
+
+        DownloadLogger::Write(
+            L"DownloadWorker",
+            L"Launching yt-dlp with command line: " +
+            commandLine);
 
         std::vector<wchar_t> commandBuffer(
             commandLine.begin(),

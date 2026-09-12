@@ -31,7 +31,18 @@
 
     btn.addEventListener("click", () => {
       const videoUrl = window.location.href;
-      const link = "ytdlp://" + encodeURIComponent(videoUrl);
+      // Deliberately "ytdlp:" (opaque form), NOT "ytdlp://" (hierarchical
+      // form). Browsers parse "scheme://data" as an authority + path, and
+      // since our percent-encoded data contains no raw "/", the whole
+      // thing gets treated as one big "host" with an empty path - which
+      // Chrome then silently normalizes by appending a trailing "/"
+      // before handing it to the registered handler. That stray slash
+      // lands at the very end of the decoded URL, corrupting whatever
+      // query parameter happens to be last (list=/index= on playlist
+      // links - hence playlists breaking while plain video links mostly
+      // didn't). The opaque "scheme:data" form isn't parsed as having an
+      // authority, so nothing gets appended.
+      const link = "ytdlp:" + encodeURIComponent(videoUrl);
       window.location.href = link;
     });
 
