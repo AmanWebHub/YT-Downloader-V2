@@ -25,6 +25,7 @@
     <ClCompile Include="DownloadOutput.cpp" />
     <ClCompile Include="DownloadState.cpp" />
     <ClCompile Include="DownloadUtils.cpp" />
+    <ClCompile Include="DownloadResumeManifest.cpp" />
     <ClCompile Include="DownloadWorker.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="MainWindow.cpp" />
@@ -37,6 +38,7 @@
     <ClInclude Include="DownloadOutput.h" />
     <ClInclude Include="DownloadState.h" />
     <ClInclude Include="DownloadUtils.h" />
+    <ClInclude Include="DownloadResumeManifest.h" />
     <ClInclude Include="DownloadWorker.h" />
     <ClInclude Include="MainWindow.h" />
     <ClInclude Include="PlaylistChoiceWindow.h" />
