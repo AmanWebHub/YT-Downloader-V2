@@ -290,11 +290,16 @@ namespace DownloadUtils
 
     namespace
     {
-        const wchar_t* const kSettingsKeyPath =
-            L"Software\\YTDownloaderV2";
-
-        const wchar_t* const kDownloadFolderValueName =
-            L"DownloadFolder";
+        // Deliberately in-memory only, NOT persisted to the registry
+        // (no HKCU key/value). A custom download folder picked via
+        // Browse is meant to last only for the current run of the
+        // app - restarting always comes back to the default
+        // %USERPROFILE%\Downloads until the user picks again.
+        std::wstring& CustomDownloadFolderStorage()
+        {
+            static std::wstring folder;
+            return folder;
+        }
     }
 
     std::wstring GetDefaultDownloadBaseFolder()
@@ -323,100 +328,19 @@ namespace DownloadUtils
 
     std::wstring GetCustomDownloadBaseFolder()
     {
-        HKEY key = nullptr;
-
-        if (RegOpenKeyExW(
-            HKEY_CURRENT_USER,
-            kSettingsKeyPath,
-            0,
-            KEY_READ,
-            &key) != ERROR_SUCCESS)
-        {
-            return L"";
-        }
-
-        wchar_t buffer[MAX_PATH]{};
-        DWORD bufferSize = sizeof(buffer);
-        DWORD type = 0;
-
-        const LONG result =
-            RegQueryValueExW(
-                key,
-                kDownloadFolderValueName,
-                nullptr,
-                &type,
-                reinterpret_cast<LPBYTE>(buffer),
-                &bufferSize);
-
-        RegCloseKey(key);
-
-        if (result != ERROR_SUCCESS ||
-            type != REG_SZ)
-        {
-            return L"";
-        }
-
-        return Trim(
-            std::wstring(buffer));
+        return CustomDownloadFolderStorage();
     }
 
     bool SetCustomDownloadBaseFolder(
         const std::wstring& folder)
     {
-        const std::wstring trimmed =
+        // Pass an empty string to clear the override and revert to
+        // the default - same contract as before, just backed by a
+        // process-lifetime variable instead of the registry now.
+        CustomDownloadFolderStorage() =
             Trim(folder);
 
-        HKEY key = nullptr;
-
-        if (trimmed.empty())
-        {
-            // Clear the override so GetDownloadsFolder() falls back
-            // to the default. Missing key/value is not an error.
-            if (RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                kSettingsKeyPath,
-                0,
-                KEY_SET_VALUE,
-                &key) != ERROR_SUCCESS)
-            {
-                return true;
-            }
-
-            RegDeleteValueW(
-                key,
-                kDownloadFolderValueName);
-
-            RegCloseKey(key);
-            return true;
-        }
-
-        if (RegCreateKeyExW(
-            HKEY_CURRENT_USER,
-            kSettingsKeyPath,
-            0,
-            nullptr,
-            REG_OPTION_NON_VOLATILE,
-            KEY_SET_VALUE,
-            nullptr,
-            &key,
-            nullptr) != ERROR_SUCCESS)
-        {
-            return false;
-        }
-
-        const LONG result =
-            RegSetValueExW(
-                key,
-                kDownloadFolderValueName,
-                0,
-                REG_SZ,
-                reinterpret_cast<const BYTE*>(trimmed.c_str()),
-                static_cast<DWORD>(
-                    (trimmed.size() + 1) * sizeof(wchar_t)));
-
-        RegCloseKey(key);
-
-        return result == ERROR_SUCCESS;
+        return true;
     }
 
     std::wstring GetActiveDownloadBaseFolder()
@@ -432,7 +356,20 @@ namespace DownloadUtils
     std::wstring GetDownloadsFolder(
         bool isMp3)
     {
-        return GetActiveDownloadBaseFolder() +
+        const std::wstring custom =
+            GetCustomDownloadBaseFolder();
+
+        // A user-picked folder (via Browse) is used exactly as
+        // chosen - they picked that specific location on purpose, so
+        // we don't impose our own \Video / \Music split on top of it.
+        // The \Video and \Music subfolders only apply to the default
+        // %USERPROFILE%\Downloads location.
+        if (!custom.empty())
+        {
+            return custom;
+        }
+
+        return GetDefaultDownloadBaseFolder() +
             (isMp3
                 ? L"\\Music"
                 : L"\\Video");

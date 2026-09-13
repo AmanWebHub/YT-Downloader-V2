@@ -8,13 +8,18 @@ namespace DownloadUtils
 {
     std::wstring GetYtDlpPath();
 
+    // Where a download actually gets saved. If the user has picked a
+    // custom folder via Browse, that exact folder is used as-is (no
+    // subfolder appended - they chose that specific location on
+    // purpose). Otherwise falls back to the default
+    // (%USERPROFILE%\Downloads\Video or \Music, split by format).
     std::wstring GetDownloadsFolder(
         bool isMp3);
 
-    // The base folder downloads are saved under before the
-    // \Video or \Music subfolder is appended. Defaults to
-    // %USERPROFILE%\Downloads unless the user has set a custom
-    // location (see Get/SetCustomDownloadBaseFolder below).
+    // The default base folder used when no custom folder is set:
+    // %USERPROFILE%\Downloads. Only relevant to the default path -
+    // see GetDownloadsFolder()'s comment for how a custom folder
+    // differs (no \Video / \Music split).
     std::wstring GetDefaultDownloadBaseFolder();
 
     // Returns the user's custom base download folder, or an empty
@@ -27,9 +32,11 @@ namespace DownloadUtils
     bool SetCustomDownloadBaseFolder(
         const std::wstring& folder);
 
-    // Convenience: whichever folder GetDownloadsFolder() is
-    // currently basing its \Video and \Music subfolders on - i.e.
-    // the custom folder if one is set, otherwise the default.
+    // Convenience for UI display: the custom folder if one is set,
+    // otherwise the default. NOTE: unlike GetDownloadsFolder(), this
+    // never appends \Video or \Music - it's meant for showing/seeding
+    // "what folder is currently active" in the Save To UI, not for
+    // resolving where a specific download actually gets written.
     std::wstring GetActiveDownloadBaseFolder();
 
     bool EnsureFolderExists(
