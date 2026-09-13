@@ -94,7 +94,7 @@ m_hwnd = CreateWindowExW(
     CW_USEDEFAULT,
     CW_USEDEFAULT,
     720,
-    536,
+    464,
     nullptr,
     nullptr,
     hInstance,
@@ -703,34 +703,12 @@ auto makeStatic =
 };
 
 // ------------------------------------------------------------
-// TITLE
-// ------------------------------------------------------------
-makeStatic(
-    L"YT Downloader V2",
-    36,
-    24,
-    400,
-    30,
-    m_titleFont);
-
-// ------------------------------------------------------------
-// SUBTITLE
-// ------------------------------------------------------------
-makeStatic(
-    L"Download videos and audio with a simple, focused workflow.",
-    38,
-    58,
-    600,
-    20,
-    m_smallFont);
-
-// ------------------------------------------------------------
 // URL LABEL
 // ------------------------------------------------------------
 makeStatic(
     L"Video or playlist URL",
     36,
-    96,
+    24,
     200,
     20,
     m_sectionFont,
@@ -748,7 +726,7 @@ m_urlEdit =
         WS_CHILD |
         ES_AUTOHSCROLL,
         36,
-        120,
+        48,
         648,
         34,
         hwnd,
@@ -775,7 +753,7 @@ SendMessageW(
 makeStatic(
     L"Format",
     36,
-    178,
+    106,
     200,
     20,
     m_sectionFont,
@@ -792,7 +770,7 @@ m_mp4Button =
         WS_CHILD |
         BS_OWNERDRAW,
         36,
-        200,
+        128,
         314,
         56,
         hwnd,
@@ -811,7 +789,7 @@ m_mp3Button =
         WS_CHILD |
         BS_OWNERDRAW,
         370,
-        200,
+        128,
         314,
         56,
         hwnd,
@@ -830,7 +808,7 @@ m_downloadButton =
         WS_CHILD |
         BS_OWNERDRAW,
         36,
-        280,
+        208,
         180,
         42,
         hwnd,
@@ -848,7 +826,7 @@ m_pauseButton =
         WS_CHILD |
         BS_OWNERDRAW,
         232,
-        280,
+        208,
         120,
         42,
         hwnd,
@@ -866,7 +844,7 @@ m_cancelButton =
         WS_CHILD |
         BS_OWNERDRAW,
         364,
-        280,
+        208,
         120,
         42,
         hwnd,
@@ -886,7 +864,7 @@ m_progressBar =
         WS_CHILD |
         PBS_SMOOTH,
         36,
-        340,
+        268,
         648,
         12,
         hwnd,
@@ -919,7 +897,7 @@ m_statusCaption =
     makeStatic(
         L"Status",
         36,
-        364,
+        292,
         60,
         20,
         m_smallFont,
@@ -937,7 +915,7 @@ m_statusLabel =
         SS_LEFT |
         SS_ENDELLIPSIS,
         96,
-        364,
+        292,
         500,
         20,
         hwnd,
@@ -955,7 +933,7 @@ m_progressPercent =
     makeStatic(
         L"0%",
         620,
-        364,
+        292,
         64,
         20,
         m_smallFont);
@@ -966,7 +944,7 @@ m_progressPercent =
 makeStatic(
     L"Save to",
     36,
-    404,
+    332,
     200,
     20,
     m_sectionFont,
@@ -985,7 +963,7 @@ m_downloadFolderEdit =
         ES_AUTOHSCROLL |
         ES_READONLY,
         36,
-        426,
+        354,
         556,
         34,
         hwnd,
@@ -1010,7 +988,7 @@ m_browseFolderButton =
         WS_CHILD |
         BS_OWNERDRAW,
         604,
-        426,
+        354,
         80,
         34,
         hwnd,
