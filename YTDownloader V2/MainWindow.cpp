@@ -1,17 +1,21 @@
 #include "MainWindow.h"
 #include "resource.h"
 #include "DownloadManager.h"
+#include "DownloadUtils.h"
+#include "DownloadState.h"
 #include "CompletionWindow.h"
 #include "PlaylistChoiceWindow.h"
 #include "DownloadLogger.h"
 
 #include <commctrl.h>
 #include <uxtheme.h>
+#include <shobjidl.h>
 #include <algorithm>
 #include <memory>
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "uxtheme.lib")
+#pragma comment(lib, "ole32.lib")
 
 namespace
 {
@@ -90,7 +94,7 @@ m_hwnd = CreateWindowExW(
     CW_USEDEFAULT,
     CW_USEDEFAULT,
     720,
-    480,
+    464,
     nullptr,
     nullptr,
     hInstance,
@@ -109,6 +113,8 @@ if (!m_hwnd)
 
 if (!initialUrl.empty())
 {
+    m_launchedViaExtension = true;
+
     SetWindowTextW(
         m_urlEdit,
         initialUrl.c_str());
@@ -284,6 +290,23 @@ case WM_CTLCOLORSTATIC:
             percentBrush);
     }
 
+    // ES_READONLY edit controls are routed through
+    // WM_CTLCOLORSTATIC (not WM_CTLCOLOREDIT) by Windows, same as a
+    // disabled edit. Paint it like a normal (enabled-looking) field
+    // since it's intentionally read-only, not disabled.
+    if (control == m_downloadFolderEdit)
+    {
+        SetBkMode(hdc, OPAQUE);
+        SetBkColor(hdc, CLR_SURFACE);
+        SetTextColor(hdc, CLR_TEXT);
+
+        static HBRUSH folderEditBrush =
+            CreateSolidBrush(CLR_SURFACE);
+
+        return reinterpret_cast<LRESULT>(
+            folderEditBrush);
+    }
+
     // A disabled Edit control is colored via WM_CTLCOLORSTATIC
     // (not WM_CTLCOLOREDIT), which only fires while enabled.
     // Without this case, m_urlEdit fell through to the generic
@@ -367,6 +390,10 @@ case WM_COMMAND:
 
         case IDC_RADIO_MP3:
             SetFormatSelection(true);
+            return 0;
+
+        case IDC_BROWSE_FOLDER_BTN:
+            OnBrowseFolderClicked(hwnd);
             return 0;
         }
     }
@@ -556,7 +583,12 @@ case WM_APP_DOWNLOAD_FINISHED:
                     : (filePath.empty()
                         ? folder
                         : filePath),
-                m_lastIsPlaylist);
+                m_lastIsPlaylist,
+                // Only extension-launched sessions auto-close after
+                // Open/Open With/Open Folder - a manually-run session
+                // keeps the main window around so the user can keep
+                // downloading in it.
+                m_launchedViaExtension);
         }
         else
         {
@@ -678,34 +710,12 @@ auto makeStatic =
 };
 
 // ------------------------------------------------------------
-// TITLE
-// ------------------------------------------------------------
-makeStatic(
-    L"YT Downloader V2",
-    36,
-    24,
-    400,
-    30,
-    m_titleFont);
-
-// ------------------------------------------------------------
-// SUBTITLE
-// ------------------------------------------------------------
-makeStatic(
-    L"Download videos and audio with a simple, focused workflow.",
-    38,
-    58,
-    600,
-    20,
-    m_smallFont);
-
-// ------------------------------------------------------------
 // URL LABEL
 // ------------------------------------------------------------
 makeStatic(
     L"Video or playlist URL",
     36,
-    96,
+    24,
     200,
     20,
     m_sectionFont,
@@ -723,7 +733,7 @@ m_urlEdit =
         WS_CHILD |
         ES_AUTOHSCROLL,
         36,
-        120,
+        48,
         648,
         34,
         hwnd,
@@ -750,7 +760,7 @@ SendMessageW(
 makeStatic(
     L"Format",
     36,
-    178,
+    106,
     200,
     20,
     m_sectionFont,
@@ -767,7 +777,7 @@ m_mp4Button =
         WS_CHILD |
         BS_OWNERDRAW,
         36,
-        200,
+        128,
         314,
         56,
         hwnd,
@@ -786,7 +796,7 @@ m_mp3Button =
         WS_CHILD |
         BS_OWNERDRAW,
         370,
-        200,
+        128,
         314,
         56,
         hwnd,
@@ -805,7 +815,7 @@ m_downloadButton =
         WS_CHILD |
         BS_OWNERDRAW,
         36,
-        280,
+        208,
         180,
         42,
         hwnd,
@@ -823,7 +833,7 @@ m_pauseButton =
         WS_CHILD |
         BS_OWNERDRAW,
         232,
-        280,
+        208,
         120,
         42,
         hwnd,
@@ -841,7 +851,7 @@ m_cancelButton =
         WS_CHILD |
         BS_OWNERDRAW,
         364,
-        280,
+        208,
         120,
         42,
         hwnd,
@@ -861,7 +871,7 @@ m_progressBar =
         WS_CHILD |
         PBS_SMOOTH,
         36,
-        340,
+        268,
         648,
         12,
         hwnd,
@@ -894,7 +904,7 @@ m_statusCaption =
     makeStatic(
         L"Status",
         36,
-        364,
+        292,
         60,
         20,
         m_smallFont,
@@ -912,7 +922,7 @@ m_statusLabel =
         SS_LEFT |
         SS_ENDELLIPSIS,
         96,
-        364,
+        292,
         500,
         20,
         hwnd,
@@ -930,10 +940,70 @@ m_progressPercent =
     makeStatic(
         L"0%",
         620,
-        364,
+        292,
         64,
         20,
         m_smallFont);
+
+// ------------------------------------------------------------
+// SAVE LOCATION LABEL
+// ------------------------------------------------------------
+makeStatic(
+    L"Save to",
+    36,
+    332,
+    200,
+    20,
+    m_sectionFont,
+    CLR_SURFACE);
+
+// ------------------------------------------------------------
+// SAVE LOCATION PATH (read-only, just for display/copy)
+// ------------------------------------------------------------
+m_downloadFolderEdit =
+    CreateWindowExW(
+        WS_EX_CLIENTEDGE,
+        L"EDIT",
+        L"",
+        WS_VISIBLE |
+        WS_CHILD |
+        ES_AUTOHSCROLL |
+        ES_READONLY,
+        36,
+        354,
+        556,
+        34,
+        hwnd,
+        (HMENU)(INT_PTR)IDC_DOWNLOAD_FOLDER_EDIT,
+        nullptr,
+        nullptr);
+
+SendMessageW(
+    m_downloadFolderEdit,
+    WM_SETFONT,
+    reinterpret_cast<WPARAM>(m_bodyFont),
+    TRUE);
+
+// ------------------------------------------------------------
+// BROWSE BUTTON
+// ------------------------------------------------------------
+m_browseFolderButton =
+    CreateWindowW(
+        L"BUTTON",
+        L"Browse...",
+        WS_VISIBLE |
+        WS_CHILD |
+        BS_OWNERDRAW,
+        604,
+        354,
+        80,
+        34,
+        hwnd,
+        (HMENU)(INT_PTR)IDC_BROWSE_FOLDER_BTN,
+        nullptr,
+        nullptr);
+
+RefreshDownloadFolderDisplay();
 
 // ------------------------------------------------------------
 // INITIAL STATE
@@ -965,6 +1035,7 @@ setFont(m_pauseButton);
 setFont(m_cancelButton);
 setFont(m_mp4Button);
 setFont(m_mp3Button);
+setFont(m_browseFolderButton);
 
 }
 
@@ -1423,6 +1494,10 @@ EnableWindow(
     m_downloadButton,
     !downloading);
 
+EnableWindow(
+    m_browseFolderButton,
+    !downloading);
+
 if (downloading)
 {
     ShowWindow(
@@ -1493,6 +1568,131 @@ const PlaylistChoiceWindow::Choice choice =
 
 return static_cast<int>(choice);
 
+}
+
+void MainWindow::RefreshDownloadFolderDisplay()
+{
+    if (!m_downloadFolderEdit)
+    {
+        return;
+    }
+
+    const std::wstring folder =
+        DownloadUtils::GetActiveDownloadBaseFolder();
+
+    SetWindowTextW(
+        m_downloadFolderEdit,
+        folder.c_str());
+
+    // Show the end of the path (drive letter can get truncated on
+    // long paths otherwise) so the most useful part stays visible.
+    SendMessageW(
+        m_downloadFolderEdit,
+        EM_SETSEL,
+        static_cast<WPARAM>(folder.size()),
+        static_cast<LPARAM>(folder.size()));
+
+    SendMessageW(
+        m_downloadFolderEdit,
+        EM_SCROLLCARET,
+        0,
+        0);
+}
+
+void MainWindow::OnBrowseFolderClicked(
+HWND hwnd)
+{
+    // A download can't be mid-flight while this dialog is open in
+    // practice (the button sits right next to disabled controls
+    // during a download), but guard anyway for safety.
+    if (DownloadState::downloadRunning.load())
+    {
+        return;
+    }
+
+    const HRESULT coInit =
+        CoInitializeEx(
+            nullptr,
+            COINIT_APARTMENTTHREADED);
+
+    // CoUninitialize must be called exactly once for every
+    // successful CoInitializeEx (S_OK or S_FALSE both count).
+    // RPC_E_CHANGED_MODE means COM was already initialized on this
+    // thread in a different concurrency mode - we didn't add a
+    // reference, so we must NOT uninitialize it.
+    const bool needsUninit =
+        SUCCEEDED(coInit);
+
+    IFileDialog* dialog = nullptr;
+
+    HRESULT hr =
+        CoCreateInstance(
+            CLSID_FileOpenDialog,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&dialog));
+
+    if (SUCCEEDED(hr))
+    {
+        DWORD options = 0;
+        dialog->GetOptions(&options);
+
+        dialog->SetOptions(
+            options |
+            FOS_PICKFOLDERS |
+            FOS_PATHMUSTEXIST |
+            FOS_FORCEFILESYSTEM);
+
+        dialog->SetTitle(
+            L"Choose a download location");
+
+        // Start the picker at the currently active folder so the
+        // user isn't dropped back at "This PC" every time.
+        const std::wstring currentFolder =
+            DownloadUtils::GetActiveDownloadBaseFolder();
+
+        IShellItem* startingFolder = nullptr;
+
+        if (SHCreateItemFromParsingName(
+            currentFolder.c_str(),
+            nullptr,
+            IID_PPV_ARGS(&startingFolder)) == S_OK)
+        {
+            dialog->SetFolder(startingFolder);
+            startingFolder->Release();
+        }
+
+        hr = dialog->Show(hwnd);
+
+        if (SUCCEEDED(hr))
+        {
+            IShellItem* result = nullptr;
+
+            if (SUCCEEDED(dialog->GetResult(&result)))
+            {
+                PWSTR path = nullptr;
+
+                if (SUCCEEDED(result->GetDisplayName(
+                    SIGDN_FILESYSPATH,
+                    &path)))
+                {
+                    DownloadUtils::SetCustomDownloadBaseFolder(path);
+                    RefreshDownloadFolderDisplay();
+
+                    CoTaskMemFree(path);
+                }
+
+                result->Release();
+            }
+        }
+
+        dialog->Release();
+    }
+
+    if (needsUninit)
+    {
+        CoUninitialize();
+    }
 }
 
 void MainWindow::OnDownloadClicked(

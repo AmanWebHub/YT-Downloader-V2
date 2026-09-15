@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <cwctype>
 
+#pragma comment(lib, "advapi32.lib")
+
 namespace
 {
     std::wstring GetExeDirectory()
@@ -286,8 +288,21 @@ namespace DownloadUtils
             L"\\bin\\yt-dlp.exe";
     }
 
-    std::wstring GetDownloadsFolder(
-        bool isMp3)
+    namespace
+    {
+        // Deliberately in-memory only, NOT persisted to the registry
+        // (no HKCU key/value). A custom download folder picked via
+        // Browse is meant to last only for the current run of the
+        // app - restarting always comes back to the default
+        // %USERPROFILE%\Downloads until the user picks again.
+        std::wstring& CustomDownloadFolderStorage()
+        {
+            static std::wstring folder;
+            return folder;
+        }
+    }
+
+    std::wstring GetDefaultDownloadBaseFolder()
     {
         wchar_t* userProfile = nullptr;
         size_t len = 0;
@@ -308,10 +323,56 @@ namespace DownloadUtils
             folder = L".";
         }
 
-        return folder +
+        return folder + L"\\Downloads";
+    }
+
+    std::wstring GetCustomDownloadBaseFolder()
+    {
+        return CustomDownloadFolderStorage();
+    }
+
+    bool SetCustomDownloadBaseFolder(
+        const std::wstring& folder)
+    {
+        // Pass an empty string to clear the override and revert to
+        // the default - same contract as before, just backed by a
+        // process-lifetime variable instead of the registry now.
+        CustomDownloadFolderStorage() =
+            Trim(folder);
+
+        return true;
+    }
+
+    std::wstring GetActiveDownloadBaseFolder()
+    {
+        const std::wstring custom =
+            GetCustomDownloadBaseFolder();
+
+        return custom.empty()
+            ? GetDefaultDownloadBaseFolder()
+            : custom;
+    }
+
+    std::wstring GetDownloadsFolder(
+        bool isMp3)
+    {
+        const std::wstring custom =
+            GetCustomDownloadBaseFolder();
+
+        // A user-picked folder (via Browse) is used exactly as
+        // chosen - they picked that specific location on purpose, so
+        // we don't impose our own \Video / \Music split on top of it.
+        // The \Video and \Music subfolders only apply to the default
+        // %USERPROFILE%\Downloads location.
+        if (!custom.empty())
+        {
+            return custom;
+        }
+
+        return GetDefaultDownloadBaseFolder() +
             (isMp3
-                ? L"\\Downloads\\Music"
-                : L"\\Downloads\\Video");
+                ? L"\\Music"
+                : L"\\Video");
     }
 
     bool EnsureFolderExists(
@@ -363,6 +424,150 @@ namespace DownloadUtils
         return text.substr(
             start,
             end - start);
+    }
+
+    std::wstring DecodeExternalUrl(
+        const std::wstring& rawArgument)
+    {
+        // Defensive: some browser/OS combinations have been observed
+        // to prepend a stray "/" onto the activated protocol string.
+        // A legitimate "ytdlp:" or "ytdlp://" argument never starts
+        // with "/", so it's always safe to strip leading slashes
+        // before looking for our scheme prefix.
+        std::wstring text =
+            Trim(rawArgument);
+
+        while (!text.empty() &&
+            text.front() == L'/')
+        {
+            text.erase(
+                text.begin());
+        }
+
+        // Recognize both the current opaque form ("ytdlp:...") and
+        // the older hierarchical form ("ytdlp://...") for backwards
+        // compatibility with any extension build still using it.
+        // Checked longest-first so "ytdlp://" isn't misread as
+        // "ytdlp:" plus a leftover "//".
+        static const wchar_t* const kPrefixes[] =
+        {
+            L"ytdlp://",
+            L"ytdlp:",
+        };
+
+        const wchar_t* matchedPrefix = nullptr;
+
+        for (const wchar_t* candidate : kPrefixes)
+        {
+            const size_t candidateLen =
+                wcslen(candidate);
+
+            if (text.size() >= candidateLen &&
+                _wcsnicmp(
+                    text.c_str(),
+                    candidate,
+                    candidateLen) == 0)
+            {
+                matchedPrefix = candidate;
+                break;
+            }
+        }
+
+        if (!matchedPrefix)
+        {
+            // Not our custom protocol (e.g. a plain URL passed on
+            // the command line, or dragged/typed input) - leave as-is.
+            return text;
+        }
+
+        std::wstring encoded =
+            text.substr(
+                wcslen(matchedPrefix));
+
+        // Defensive: strip a stray trailing "/" some browsers add
+        // when canonicalizing the hierarchical "ytdlp://" form (see
+        // the comment in the extension's content.js). Our own
+        // encodeURIComponent() output never contains a raw "/", so
+        // any trailing one here is browser-added noise, not data.
+        while (!encoded.empty() &&
+            encoded.back() == L'/')
+        {
+            encoded.pop_back();
+        }
+
+        auto hexValue = [](wchar_t c) -> int
+        {
+            if (c >= L'0' && c <= L'9') return c - L'0';
+            if (c >= L'a' && c <= L'f') return 10 + (c - L'a');
+            if (c >= L'A' && c <= L'F') return 10 + (c - L'A');
+            return -1;
+        };
+
+        // encodeURIComponent() produces plain-ASCII, percent-encoded
+        // UTF-8 bytes, so we can rebuild the raw UTF-8 byte sequence
+        // directly from the wide characters here.
+        std::string utf8Bytes;
+        utf8Bytes.reserve(encoded.size());
+
+        for (size_t i = 0; i < encoded.size(); ++i)
+        {
+            const wchar_t ch = encoded[i];
+
+            if (ch == L'%' &&
+                i + 2 < encoded.size())
+            {
+                const int high = hexValue(encoded[i + 1]);
+                const int low = hexValue(encoded[i + 2]);
+
+                if (high >= 0 && low >= 0)
+                {
+                    utf8Bytes.push_back(
+                        static_cast<char>((high << 4) | low));
+
+                    i += 2;
+                    continue;
+                }
+            }
+
+            if (ch <= 0x7F)
+            {
+                utf8Bytes.push_back(
+                    static_cast<char>(ch));
+            }
+        }
+
+        if (utf8Bytes.empty())
+        {
+            return L"";
+        }
+
+        const int wideLength =
+            MultiByteToWideChar(
+                CP_UTF8,
+                0,
+                utf8Bytes.c_str(),
+                static_cast<int>(utf8Bytes.size()),
+                nullptr,
+                0);
+
+        if (wideLength <= 0)
+        {
+            return L"";
+        }
+
+        std::wstring decoded(
+            static_cast<size_t>(wideLength),
+            L'\0');
+
+        MultiByteToWideChar(
+            CP_UTF8,
+            0,
+            utf8Bytes.c_str(),
+            static_cast<int>(utf8Bytes.size()),
+            decoded.data(),
+            wideLength);
+
+        return Trim(decoded);
     }
 
     std::wstring FindNewestFileSince(

@@ -13,7 +13,17 @@ namespace
     constexpr int IDC_COMP_OPEN        = 2002;
     constexpr int IDC_COMP_OPEN_WITH   = 2003;
     constexpr int IDC_COMP_OPEN_FOLDER = 2004;
-    constexpr int IDC_COMP_DONE        = 2005;
+    constexpr int IDC_COMP_CLOSE       = 2005;
+
+    // Retry timer for forcing this window to the foreground - see
+    // ForceForegroundWindow and the WM_TIMER handling below. ~900ms
+    // of retries total, which is enough for the vast majority of
+    // "lost the race" cases without being noticeable as a delay.
+    constexpr UINT_PTR kForegroundRetryTimerId = 9001;
+    constexpr UINT kForegroundRetryIntervalMs = 150;
+    constexpr int kForegroundMaxRetries = 6;
+    constexpr wchar_t kForegroundRetryDeadlineProperty[] =
+        L"YTDownloaderV2ForegroundRetryDeadline";
 
     constexpr COLORREF CLR_BG =
         RGB(248, 249, 251);
@@ -117,13 +127,160 @@ namespace
         DeleteObject(pen);
         DeleteObject(brush);
     }
+
+    // Simulates a harmless Alt key tap. Windows' foreground-lock
+    // exception logic grants a foreground-switch request when the
+    // most recent input event was a real keypress - Chromium-based
+    // browsers in particular hold onto foreground status more
+    // stubbornly than most apps, and this is the standard,
+    // widely-used way to satisfy that check without any real input
+    // from the user. The key is pressed and released immediately, so
+    // there's no visible/functional effect on whatever app is
+    // currently focused.
+    void SimulateAltKeypress()
+    {
+        INPUT inputs[2]{};
+
+        inputs[0].type = INPUT_KEYBOARD;
+        inputs[0].ki.wVk = VK_MENU;
+
+        inputs[1].type = INPUT_KEYBOARD;
+        inputs[1].ki.wVk = VK_MENU;
+        inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+
+        SendInput(
+            2,
+            inputs,
+            sizeof(INPUT));
+    }
+
+    // Plain SetForegroundWindow() is routinely refused by Windows'
+    // foreground-lock heuristic when the calling process isn't
+    // already the foreground app and didn't just receive real user
+    // input - exactly the situation here (a background download just
+    // finished while the browser stayed focused). This does the
+    // standard, documented sequence to work around that: simulate a
+    // keypress (see SimulateAltKeypress above - Chromium-based
+    // browsers hold foreground more stubbornly than most apps and
+    // this is often what it takes against them specifically), attach
+    // our thread's input queue to the current foreground window's
+    // thread (makes the request look like it came from the
+    // already-focused thread), then, only if that still didn't
+    // actually take effect, fall back to a minimize/restore cycle -
+    // restoring from a minimized state is one of the few actions
+    // Windows always honors as a legitimate foreground request,
+    // regardless of the lock. The window is never left topmost
+    // either way.
+    void ForceForegroundWindow(
+        HWND hwnd)
+    {
+        if (!hwnd)
+        {
+            return;
+        }
+
+        SimulateAltKeypress();
+
+        const HWND currentForeground =
+            GetForegroundWindow();
+
+        const DWORD currentThreadId =
+            GetCurrentThreadId();
+
+        const DWORD foregroundThreadId =
+            currentForeground
+                ? GetWindowThreadProcessId(
+                    currentForeground,
+                    nullptr)
+                : 0;
+
+        const bool attached =
+            foregroundThreadId != 0 &&
+            foregroundThreadId != currentThreadId &&
+            AttachThreadInput(
+                foregroundThreadId,
+                currentThreadId,
+                TRUE) != 0;
+
+        // Tell the system we're allowed to steal foreground - helps
+        // in some contexts even without AttachThreadInput succeeding.
+        AllowSetForegroundWindow(
+            ASFW_ANY);
+
+        // Brief topmost flash: an extra nudge that helps in a few
+        // edge cases AttachThreadInput alone doesn't cover. Reverted
+        // immediately - this never leaves the window topmost.
+        SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE |
+            SWP_NOSIZE |
+            SWP_NOACTIVATE);
+
+        SetWindowPos(
+            hwnd,
+            HWND_NOTOPMOST,
+            0, 0, 0, 0,
+            SWP_NOMOVE |
+            SWP_NOSIZE |
+            SWP_NOACTIVATE);
+
+        ShowWindow(
+            hwnd,
+            SW_SHOW);
+
+        BringWindowToTop(
+            hwnd);
+
+        SetForegroundWindow(
+            hwnd);
+
+        SetActiveWindow(
+            hwnd);
+
+        SetFocus(
+            hwnd);
+
+        // Fallback: if none of the above actually made us the
+        // foreground window (the attach can fail to help in some
+        // sandboxed/UAC-boundary situations), force it the one way
+        // Windows can't refuse - restoring from minimized.
+        if (GetForegroundWindow() != hwnd)
+        {
+            SimulateAltKeypress();
+
+            ShowWindow(
+                hwnd,
+                SW_MINIMIZE);
+
+            ShowWindow(
+                hwnd,
+                SW_RESTORE);
+
+            SetForegroundWindow(
+                hwnd);
+
+            SetFocus(
+                hwnd);
+        }
+
+        if (attached)
+        {
+            AttachThreadInput(
+                foregroundThreadId,
+                currentThreadId,
+                FALSE);
+        }
+    }
 }
 
 CompletionWindow* CompletionWindow::Create(
     HINSTANCE hInstance,
     HWND ownerToRestore,
     const std::wstring& filePath,
-    bool isPlaylist)
+    bool isPlaylist,
+    bool closeWindowsOnAction)
 {
     CompletionWindow* self =
         new CompletionWindow();
@@ -136,6 +293,9 @@ CompletionWindow* CompletionWindow::Create(
 
     self->m_isPlaylist =
         isPlaylist;
+
+    self->m_closeWindowsOnAction =
+        closeWindowsOnAction;
 
     // Determine whether the supplied completion path is a folder.
     DWORD attributes =
@@ -255,8 +415,30 @@ CompletionWindow* CompletionWindow::Create(
     UpdateWindow(
         self->m_hwnd);
 
-    SetForegroundWindow(
+    ForceForegroundWindow(
         self->m_hwnd);
+
+    // The single synchronous attempt above can still lose a race
+    // with the OS's/browser's own activation handling. If it didn't
+    // actually stick, keep retrying briefly on a timer rather than
+    // giving up - see the WM_TIMER handling in HandleMessage.
+    if (GetForegroundWindow() != self->m_hwnd)
+    {
+        SetPropW(
+            self->m_hwnd,
+            kForegroundRetryDeadlineProperty,
+            reinterpret_cast<HANDLE>(
+                static_cast<ULONG_PTR>(
+                    GetTickCount() +
+                    kForegroundRetryIntervalMs *
+                    kForegroundMaxRetries)));
+
+        SetTimer(
+            self->m_hwnd,
+            kForegroundRetryTimerId,
+            kForegroundRetryIntervalMs,
+            nullptr);
+    }
 
     return self;
 }
@@ -396,6 +578,39 @@ LRESULT CompletionWindow::HandleMessage(
 
         return TRUE;
 
+    case WM_TIMER:
+        if (wParam ==
+            kForegroundRetryTimerId)
+        {
+            const DWORD deadline =
+                static_cast<DWORD>(
+                    reinterpret_cast<ULONG_PTR>(
+                        GetPropW(
+                            hwnd,
+                            kForegroundRetryDeadlineProperty)));
+
+            if (GetForegroundWindow() == hwnd ||
+                deadline == 0 ||
+                static_cast<LONG>(
+                    GetTickCount() - deadline) >= 0)
+            {
+                KillTimer(
+                    hwnd,
+                    kForegroundRetryTimerId);
+
+                RemovePropW(
+                    hwnd,
+                    kForegroundRetryDeadlineProperty);
+            }
+            else
+            {
+                ForceForegroundWindow(
+                    hwnd);
+            }
+        }
+
+        return 0;
+
     case WM_COMMAND:
         if (HIWORD(wParam) ==
             BN_CLICKED)
@@ -414,8 +629,24 @@ LRESULT CompletionWindow::HandleMessage(
                 OnOpenFolderClicked();
                 return 0;
 
-            case IDC_COMP_DONE:
-                DestroyWindow(hwnd);
+            case IDC_COMP_CLOSE:
+                if (m_closeWindowsOnAction)
+                {
+                    // Extension-launched session: there's no main
+                    // window to come back to, so Close just ends the
+                    // whole session, same as a successful
+                    // Open/Open With/Open Folder would.
+                    CloseAssociatedWindows();
+                }
+                else
+                {
+                    // Manually-launched session: keep the existing
+                    // behavior of dismissing this dialog and
+                    // returning to the main window (WM_NCDESTROY
+                    // handles the restore).
+                    DestroyWindow(hwnd);
+                }
+
                 return 0;
 
             default:
@@ -431,13 +662,17 @@ LRESULT CompletionWindow::HandleMessage(
 
     case WM_NCDESTROY:
     {
+        KillTimer(
+            hwnd,
+            kForegroundRetryTimerId);
+
+        RemovePropW(
+            hwnd,
+            kForegroundRetryDeadlineProperty);
+
         if (m_ownerToRestore)
         {
-            ShowWindow(
-                m_ownerToRestore,
-                SW_SHOW);
-
-            SetForegroundWindow(
+            ForceForegroundWindow(
                 m_ownerToRestore);
         }
 
@@ -597,7 +832,7 @@ void CompletionWindow::CreateControls(
     // ---------------------------------------------------------------
     // Single download
     //
-    // Open | Open With... | Open Folder | Done
+    // Open | Open With... | Open Folder | Close
     // ---------------------------------------------------------------
     if (!m_isPlaylist)
     {
@@ -638,8 +873,8 @@ void CompletionWindow::CreateControls(
             buttonWidth);
 
         makeButton(
-            L"Done",
-            IDC_COMP_DONE,
+            L"Close",
+            IDC_COMP_CLOSE,
             x4,
             buttonY,
             buttonWidth);
@@ -647,7 +882,7 @@ void CompletionWindow::CreateControls(
     // ---------------------------------------------------------------
     // Playlist
     //
-    // Open Folder | Done
+    // Open Folder | Close
     // ---------------------------------------------------------------
     else
     {
@@ -661,8 +896,8 @@ void CompletionWindow::CreateControls(
             buttonWidth);
 
         makeButton(
-            L"Done",
-            IDC_COMP_DONE,
+            L"Close",
+            IDC_COMP_CLOSE,
             318,
             buttonY,
             buttonWidth);
@@ -886,15 +1121,49 @@ void CompletionWindow::PaintBackground(
         dot);
 }
 
+void CompletionWindow::CloseAssociatedWindows()
+{
+    // Detach the owner first so WM_NCDESTROY's normal
+    // hide-then-restore logic doesn't fire - we're closing this
+    // session's windows outright, not returning to the main window.
+    HWND owner =
+        m_ownerToRestore;
+
+    m_ownerToRestore =
+        nullptr;
+
+    if (owner)
+    {
+        DestroyWindow(owner);
+    }
+
+    // Destroying m_hwnd triggers WM_NCDESTROY, which deletes this
+    // object - nothing in this class should run after this call.
+    DestroyWindow(m_hwnd);
+}
+
 void CompletionWindow::OnOpenClicked()
 {
-    ShellExecuteW(
-        m_hwnd,
-        L"open",
-        m_filePath.c_str(),
-        nullptr,
-        nullptr,
-        SW_SHOWNORMAL);
+    const HINSTANCE result =
+        ShellExecuteW(
+            m_hwnd,
+            L"open",
+            m_filePath.c_str(),
+            nullptr,
+            nullptr,
+            SW_SHOWNORMAL);
+
+    // ShellExecuteW returns a value > 32 on success (it's documented
+    // as an HINSTANCE for historical reasons, but is really a status
+    // code here) - anything <= 32 is a specific SE_ERR_* failure.
+    const bool succeeded =
+        reinterpret_cast<INT_PTR>(result) > 32;
+
+    if (succeeded &&
+        m_closeWindowsOnAction)
+    {
+        CloseAssociatedWindows();
+    }
 }
 
 void CompletionWindow::OnOpenWithClicked()
@@ -916,8 +1185,20 @@ void CompletionWindow::OnOpenWithClicked()
             m_hwnd,
             &info);
 
-    if (FAILED(hr) &&
-        hr != HRESULT_FROM_WIN32(
+    if (SUCCEEDED(hr))
+    {
+        // OAIF_EXEC means SHOpenWithDialog already launched the file
+        // with whatever the user picked, so S_OK here means the open
+        // actually happened - not just that the dialog was shown.
+        if (m_closeWindowsOnAction)
+        {
+            CloseAssociatedWindows();
+        }
+
+        return;
+    }
+
+    if (hr != HRESULT_FROM_WIN32(
             ERROR_CANCELLED))
     {
         MessageBoxW(
@@ -927,10 +1208,15 @@ void CompletionWindow::OnOpenWithClicked()
             MB_OK |
             MB_ICONERROR);
     }
+
+    // hr == ERROR_CANCELLED: user backed out of the dialog without
+    // picking anything - not a success, so don't close anything.
 }
 
 void CompletionWindow::OnOpenFolderClicked()
 {
+    HINSTANCE result = nullptr;
+
     if (m_isPlaylist ||
         m_isFolderOnly)
     {
@@ -941,27 +1227,38 @@ void CompletionWindow::OnOpenFolderClicked()
         // hold if this window is ever handed a specific file while
         // m_isFolderOnly/m_isPlaylist is set), so open it the same
         // explicit, reliable way as the non-playlist path below.
-        ShellExecuteW(
-            m_hwnd,
-            L"open",
-            L"explorer.exe",
-            (L"\"" + m_filePath + L"\"").c_str(),
-            nullptr,
-            SW_SHOWNORMAL);
+        result =
+            ShellExecuteW(
+                m_hwnd,
+                L"open",
+                L"explorer.exe",
+                (L"\"" + m_filePath + L"\"").c_str(),
+                nullptr,
+                SW_SHOWNORMAL);
+    }
+    else
+    {
+        const std::wstring args =
+            L"/select,\""
+            + m_filePath
+            + L"\"";
 
-        return;
+        result =
+            ShellExecuteW(
+                m_hwnd,
+                L"open",
+                L"explorer.exe",
+                args.c_str(),
+                nullptr,
+                SW_SHOWNORMAL);
     }
 
-    const std::wstring args =
-        L"/select,\""
-        + m_filePath
-        + L"\"";
+    const bool succeeded =
+        reinterpret_cast<INT_PTR>(result) > 32;
 
-    ShellExecuteW(
-        m_hwnd,
-        L"open",
-        L"explorer.exe",
-        args.c_str(),
-        nullptr,
-        SW_SHOWNORMAL);
+    if (succeeded &&
+        m_closeWindowsOnAction)
+    {
+        CloseAssociatedWindows();
+    }
 }

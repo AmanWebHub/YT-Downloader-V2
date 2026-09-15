@@ -39,6 +39,9 @@
     <ClCompile Include="DownloadUtils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="DownloadResumeManifest.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="DownloadWorker.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -69,6 +72,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DownloadUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DownloadResumeManifest.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="DownloadWorker.h">

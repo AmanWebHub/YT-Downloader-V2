@@ -64,6 +64,14 @@ private:
     // Download actions
     // ------------------------------------------------------------
 
+    // ------------------------------------------------------------
+    // Download location
+    // ------------------------------------------------------------
+
+    void RefreshDownloadFolderDisplay();
+
+    void OnBrowseFolderClicked(HWND hwnd);
+
     void OnDownloadClicked(HWND hwnd);
 
     void OnCancelClicked();
@@ -116,6 +124,9 @@ private:
     HWND m_mp4Button = nullptr;
     HWND m_mp3Button = nullptr;
 
+    HWND m_downloadFolderEdit = nullptr;
+    HWND m_browseFolderButton = nullptr;
+
     // ------------------------------------------------------------
     // Fonts
     // ------------------------------------------------------------
@@ -133,6 +144,16 @@ private:
     bool m_isPaused = false;
     bool m_selectedMp3 = false;
     bool m_cancelPending = false;
+
+    // True when this process was launched with a URL already on the
+    // command line (i.e. via the ytdlp:// protocol handler from the
+    // browser extension), as opposed to being opened normally and
+    // having a URL typed/pasted in. Used to decide whether the
+    // Completion Window should close this whole session's windows
+    // after Open / Open With / Open Folder, so repeated extension
+    // downloads don't pile up windows - see MainWindow::Create() and
+    // the CompletionWindow::Create() call in WM_APP_DOWNLOAD_FINISHED.
+    bool m_launchedViaExtension = false;
 
     std::wstring m_lastStatusText;
 
