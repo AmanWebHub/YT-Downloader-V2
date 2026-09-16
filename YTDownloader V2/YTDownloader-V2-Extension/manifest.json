@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "YT Downloader V2 - One Click",
+  "version": "2.0.0",
+  "description": "Adds a one-click download button on YouTube video pages, powered by your local YTDownloader V2 (yt-dlp) desktop app.",
+  "host_permissions": ["*://www.youtube.com/*"],
+  "content_scripts": [
+    {
+      "matches": ["*://www.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

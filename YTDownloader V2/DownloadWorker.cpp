@@ -15,6 +15,7 @@
 #include <cwctype>
 #include <sstream>
 #include <iomanip>
+#include <thread>
 
 // The resume/session-manifest subsystem (tracking what's been
 // downloaded so pause/cancel/resume can clean up correctly) used to
@@ -257,6 +258,7 @@ namespace
         DownloadState::stopRequested = false;
         DownloadState::pauseRequested = false;
         DownloadState::downloadRunning = false;
+        DownloadState::stalledByWatchdog = false;
     }
 
     // yt-dlp's bundled Python runtime picks its stdout/stderr text
@@ -592,6 +594,74 @@ namespace DownloadWorker
             ownerWindow,
             L"Starting download...");
 
+        // Stall watchdog: yt-dlp's own --socket-timeout only bounds
+        // its plain network reads - it does NOT cover every
+        // operation it can block on (e.g. a format-testing step that
+        // shells out to an external helper like a JS runtime). If
+        // yt-dlp goes silent for too long, this treats it the same
+        // as a user-initiated cancel: it sets stopRequested, which
+        // the main loop below already knows how to act on
+        // (TerminateJobObject, then the normal cleanup path). Runs
+        // only while this download is active and stops itself the
+        // moment that's no longer true.
+        DownloadState::lastOutputTick.store(
+            static_cast<long long>(GetTickCount64()));
+
+        std::thread([]()
+        {
+            constexpr long long kStallThresholdMs = 25000;
+            constexpr DWORD kPollIntervalMs = 2000;
+
+            while (DownloadState::downloadRunning.load())
+            {
+                Sleep(kPollIntervalMs);
+
+                if (!DownloadState::downloadRunning.load())
+                {
+                    break;
+                }
+
+                if (DownloadState::stopRequested.load() ||
+                    DownloadState::pauseRequested.load())
+                {
+                    // Already being cancelled/paused for some other
+                    // reason - nothing for the watchdog to do.
+                    break;
+                }
+
+                const long long elapsed =
+                    static_cast<long long>(GetTickCount64()) -
+                    DownloadState::lastOutputTick.load();
+
+                if (elapsed > kStallThresholdMs)
+                {
+                    DownloadLogger::Write(
+                        L"DownloadWorker",
+                        L"Watchdog: no output for over "
+                        L"25s - treating as stalled, "
+                        L"auto-cancelling.");
+
+                    DownloadState::stalledByWatchdog =
+                        true;
+
+                    // Setting stopRequested alone isn't enough: the
+                    // worker thread's own loop is what normally acts
+                    // on that flag, but it's permanently blocked
+                    // inside a blocking ReadFile() waiting for
+                    // output that will never come while yt-dlp is
+                    // stalled - so it never gets back around to
+                    // check the flag. CancelDownload() is what a
+                    // manual Cancel click calls, and it terminates
+                    // the job/process directly from whichever thread
+                    // calls it, which is exactly what's needed here
+                    // to actually unblock that read.
+                    DownloadManager::CancelDownload();
+
+                    break;
+                }
+            }
+        }).detach();
+
         std::string pending;
         std::wstring finalFileName;
 
@@ -635,6 +705,11 @@ namespace DownloadWorker
             {
                 break;
             }
+
+            // Any output at all means yt-dlp is still alive and
+            // working - reset the stall watchdog's clock.
+            DownloadState::lastOutputTick.store(
+                static_cast<long long>(GetTickCount64()));
 
             // Diagnostic: log every raw line from yt-dlp so we can see
             // exactly what it's printing (including the __ITD_FILE__
@@ -718,9 +793,15 @@ namespace DownloadWorker
                 downloadsFolder,
                 originalStartTime);
 
+            const bool wasStalled =
+                DownloadState::stalledByWatchdog.load();
+
             DownloadOutput::PostStatus(
                 ownerWindow,
-                L"Download cancelled.");
+                wasStalled
+                    ? L"Download stalled and was cancelled "
+                      L"automatically. Please try again."
+                    : L"Download cancelled.");
         }
         else
         {

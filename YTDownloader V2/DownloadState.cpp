@@ -8,4 +8,7 @@ namespace DownloadState
 
     std::atomic<HANDLE> processHandle{ nullptr };
     std::atomic<HANDLE> jobHandle{ nullptr };
+
+    std::atomic<long long> lastOutputTick{ 0 };
+    std::atomic<bool> stalledByWatchdog{ false };
 }
