@@ -282,10 +282,21 @@ namespace
 
 namespace DownloadUtils
 {
+    std::wstring GetExeDirectory()
+    {
+        return ::GetExeDirectory();
+    }
+
     std::wstring GetYtDlpPath()
     {
         return GetExeDirectory() +
             L"\\bin\\yt-dlp.exe";
+    }
+
+    std::wstring GetYtDlpBinFolder()
+    {
+        return GetExeDirectory() +
+            L"\\bin";
     }
 
     namespace

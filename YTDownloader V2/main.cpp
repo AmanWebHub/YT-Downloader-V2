@@ -11,6 +11,19 @@ int WINAPI wWinMain(
     _In_ int nCmdShow
 )
 {
+    // Pin our own working directory to the exe's folder up front.
+    // Without this, our CWD is whatever the OS/launching process
+    // decided (which varies by how we were started - a shell/
+    // protocol-handler launch behaves differently than Visual
+    // Studio's debugger, for example) - and if anything ever does a
+    // bare-filename file operation (no directory component), that
+    // uncertainty otherwise flows straight through to us and
+    // anything we launch. yt-dlp's own working directory is set
+    // explicitly and separately in DownloadWorker.cpp; this covers
+    // our own process the same way.
+    SetCurrentDirectoryW(
+        DownloadUtils::GetExeDirectory().c_str());
+
     std::wstring initialUrl;
 
     int argumentCount = 0;

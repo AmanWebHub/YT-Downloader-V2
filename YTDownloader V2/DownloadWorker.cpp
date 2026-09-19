@@ -464,6 +464,23 @@ namespace DownloadWorker
         std::vector<wchar_t> environmentBlock =
             BuildChildEnvironmentWithUtf8();
 
+        // yt-dlp (or a library it uses internally - this traced back
+        // to right after some crypto/TLS provider registry lookups)
+        // can open a file using a bare filename with no directory
+        // component, which Windows then resolves relative to the
+        // process's current working directory. We never set one
+        // explicitly here, so yt-dlp was just inheriting whatever
+        // OUR OWN process's working directory happened to be - which
+        // varies depending on how this app itself was launched, and
+        // could land on a drive root (where a standard, non-admin
+        // user can't create new files - hence the PermissionError
+        // that "Run as administrator" appeared to "fix"). Pointing
+        // it at our own bin folder instead - guaranteed to exist and
+        // be writable, since yt-dlp.exe itself lives there - removes
+        // that uncertainty entirely.
+        const std::wstring ytDlpBinFolder =
+            DownloadUtils::GetYtDlpBinFolder();
+
         const BOOL created =
             CreateProcessW(
                 nullptr,
@@ -474,7 +491,7 @@ namespace DownloadWorker
                 CREATE_NO_WINDOW |
                 CREATE_UNICODE_ENVIRONMENT,
                 environmentBlock.data(),
-                nullptr,
+                ytDlpBinFolder.c_str(),
                 &startupInfo,
                 &processInfo);
 

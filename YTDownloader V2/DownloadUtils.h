@@ -8,6 +8,17 @@ namespace DownloadUtils
 {
     std::wstring GetYtDlpPath();
 
+    // Folder containing the running exe itself. Exposed publicly so
+    // callers outside this file (main.cpp, pinning our own working
+    // directory at startup) can use the same logic GetYtDlpPath()/
+    // GetYtDlpBinFolder() are built on.
+    std::wstring GetExeDirectory();
+
+    // The "bin" folder containing yt-dlp.exe/ffmpeg.exe/deno.exe.
+    // Used as yt-dlp's working directory when launching it - see the
+    // comment at that CreateProcessW call for why that matters.
+    std::wstring GetYtDlpBinFolder();
+
     // Where a download actually gets saved. If the user has picked a
     // custom folder via Browse, that exact folder is used as-is (no
     // subfolder appended - they chose that specific location on

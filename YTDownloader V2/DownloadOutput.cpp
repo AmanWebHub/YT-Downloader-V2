@@ -378,13 +378,25 @@ namespace DownloadOutput
 
         // ---------------------------------------------------------
         // Error reporting.
+        //
+        // yt-dlp prints a line with "ERROR:" for a transient failure
+        // it's about to retry (via --retries/--extractor-retries),
+        // not just for a final, fatal one - the overall download can
+        // still finish successfully afterward (in which case this
+        // gets overwritten by "Download complete." once it does; see
+        // WM_APP_DOWNLOAD_FINISHED in MainWindow.cpp). Showing the
+        // raw technical text (Python exception names, errno codes,
+        // stack-trace-style wording) here reads as a final failure
+        // even when it isn't, so show something calmer instead - the
+        // final status message is what actually reflects the real
+        // outcome.
         // ---------------------------------------------------------
         if (line.find(L"ERROR:") !=
             std::wstring::npos)
         {
             PostStatus(
                 ownerWindow,
-                line);
+                L"A temporary error occurred - retrying...");
         }
     }
 }
