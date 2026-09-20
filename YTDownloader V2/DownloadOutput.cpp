@@ -382,21 +382,25 @@ namespace DownloadOutput
         // yt-dlp prints a line with "ERROR:" for a transient failure
         // it's about to retry (via --retries/--extractor-retries),
         // not just for a final, fatal one - the overall download can
-        // still finish successfully afterward (in which case this
-        // gets overwritten by "Download complete." once it does; see
-        // WM_APP_DOWNLOAD_FINISHED in MainWindow.cpp). Showing the
-        // raw technical text (Python exception names, errno codes,
-        // stack-trace-style wording) here reads as a final failure
-        // even when it isn't, so show something calmer instead - the
-        // final status message is what actually reflects the real
-        // outcome.
+        // still finish successfully afterward. These can also repeat
+        // many times in a row for the same underlying transient
+        // cause (e.g. a security product briefly locking a file
+        // during yt-dlp's own startup), which previously meant this
+        // status message kept re-posting fast enough to drown out
+        // real progress updates and make the download look stalled
+        // when it wasn't. Deliberately not touching the status field
+        // here at all now - whatever progress/filename text was
+        // already showing just stays put, and the real outcome still
+        // gets set correctly at the end regardless (see
+        // WM_APP_DOWNLOAD_FINISHED in MainWindow.cpp for the
+        // "Download complete."/"Download failed." messages). The raw
+        // line is still fully captured in download_debug.log via the
+        // RAW OUTPUT logging in DownloadWorker.cpp either way.
         // ---------------------------------------------------------
         if (line.find(L"ERROR:") !=
             std::wstring::npos)
         {
-            PostStatus(
-                ownerWindow,
-                L"A temporary error occurred - retrying...");
+            return;
         }
     }
 }
