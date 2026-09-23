@@ -131,7 +131,6 @@ private:
     // Fonts
     // ------------------------------------------------------------
 
-    HFONT m_titleFont = nullptr;
     HFONT m_sectionFont = nullptr;
     HFONT m_bodyFont = nullptr;
     HFONT m_smallFont = nullptr;

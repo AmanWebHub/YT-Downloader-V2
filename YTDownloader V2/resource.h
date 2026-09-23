@@ -1,5 +1,7 @@
 #pragma once
 
+#define IDI_APP_ICON        101
+
 #define IDC_URL             1001
 #define IDC_RADIO_MP4       1002
 #define IDC_RADIO_MP3       1003

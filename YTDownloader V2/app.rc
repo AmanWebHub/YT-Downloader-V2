@@ -1,0 +1,6 @@
+#include "resource.h"
+
+// App icon. Must stay in sync with the IDI_APP_ICON value in
+// resource.h - referenced by name here and from MainWindow.cpp's
+// window class registration (LoadIconW).
+IDI_APP_ICON ICON "ytdownloaderv2.ico"

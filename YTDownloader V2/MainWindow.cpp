@@ -67,18 +67,34 @@ cc.dwSize = sizeof(cc);
 cc.dwICC = ICC_PROGRESS_CLASS;
 InitCommonControlsEx(&cc);
 
-WNDCLASSW wc = {};
+WNDCLASSEXW wc = {};
+wc.cbSize = sizeof(wc);
 wc.lpfnWndProc = MainWindow::WindowProcStatic;
 wc.hInstance = hInstance;
 wc.lpszClassName = CLASS_NAME;
 wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
 wc.hbrBackground = nullptr;
 
+wc.hIcon =
+    LoadIconW(
+        hInstance,
+        MAKEINTRESOURCEW(IDI_APP_ICON));
+
+wc.hIconSm =
+    static_cast<HICON>(
+        LoadImageW(
+            hInstance,
+            MAKEINTRESOURCEW(IDI_APP_ICON),
+            IMAGE_ICON,
+            16,
+            16,
+            LR_DEFAULTCOLOR));
+
 static bool registered = false;
 
 if (!registered)
 {
-    RegisterClassW(&wc);
+    RegisterClassExW(&wc);
     registered = true;
 }
 
@@ -626,7 +642,6 @@ case WM_APP_DOWNLOAD_FINISHED:
 case WM_DESTROY:
     DownloadManager::CancelDownload();
 
-    DeleteFont(m_titleFont);
     DeleteFont(m_sectionFont);
     DeleteFont(m_bodyFont);
     DeleteFont(m_smallFont);
@@ -649,9 +664,6 @@ void MainWindow::CreateControls(HWND hwnd)
 // ------------------------------------------------------------
 // FONTS
 // ------------------------------------------------------------
-m_titleFont =
-MakeFont(22, FW_SEMIBOLD);
-
 m_sectionFont =
     MakeFont(13, FW_SEMIBOLD);
 
