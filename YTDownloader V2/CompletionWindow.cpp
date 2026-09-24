@@ -1,4 +1,5 @@
 #include "CompletionWindow.h"
+#include "resource.h"
 
 #include <shellapi.h>
 #include <shlobj.h>
@@ -325,6 +326,12 @@ CompletionWindow* CompletionWindow::Create(
     wc.hInstance =
         hInstance;
 
+    // Application icon for the completion window.
+    wc.hIcon =
+        LoadIconW(
+            hInstance,
+            MAKEINTRESOURCEW(IDI_APP_ICON));
+
     wc.lpszClassName =
         CLASS_NAME;
 
@@ -369,6 +376,42 @@ CompletionWindow* CompletionWindow::Create(
     {
         delete self;
         return nullptr;
+    }
+
+    // Explicitly set both the large and small window icons.
+    // WNDCLASSW only has hIcon; the small icon must be assigned
+    // to the actual window using WM_SETICON.
+    HICON hIconBig =
+        LoadIconW(
+            hInstance,
+            MAKEINTRESOURCEW(IDI_APP_ICON));
+
+    HICON hIconSmall =
+        static_cast<HICON>(
+            LoadImageW(
+                hInstance,
+                MAKEINTRESOURCEW(IDI_APP_ICON),
+                IMAGE_ICON,
+                16,
+                16,
+                LR_DEFAULTCOLOR));
+
+    if (hIconBig)
+    {
+        SendMessageW(
+            self->m_hwnd,
+            WM_SETICON,
+            ICON_BIG,
+            reinterpret_cast<LPARAM>(hIconBig));
+    }
+
+    if (hIconSmall)
+    {
+        SendMessageW(
+            self->m_hwnd,
+            WM_SETICON,
+            ICON_SMALL,
+            reinterpret_cast<LPARAM>(hIconSmall));
     }
 
     if (ownerToRestore)
